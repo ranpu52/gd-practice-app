@@ -6,7 +6,7 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 const GD_TYPES = ["GD練習", "ES添削会", "模擬面接会"];
-const GD_TAGS = ["初心者歓迎", "就活対策", "授業練習", "オンライン", "フィードバックあり"];
+const GD_TAGS = ["GD", "ES添削", "模擬面接", "誰でも歓迎", "フレンドのみ"];
 const METHODS = ["オンライン", "対面", "オンライン・対面どちらも可"];
 const SAFE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -234,6 +234,7 @@ export default function App() {
   const [notificationStatus, setNotificationStatus] = useState(getNotificationStatus);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedTag, setSelectedTag] = useState("all");
+  const [selectedSearchTags, setSelectedSearchTags] = useState([]);
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
   const [newSession, setNewSession] = useState({
@@ -322,10 +323,10 @@ export default function App() {
       if (selectedTag === "friends") tagOK = session.visibility === "friends";
       if (selectedTag === "friendRelated") tagOK = friendInRoom || friendCreated;
       if (selectedTag === "joined") tagOK = hasJoined;
-      if (GD_TAGS.includes(selectedTag)) tagOK = session.tags.includes(selectedTag);
-      return keywordOK && tagOK;
+      const selectedTagsOK = selectedSearchTags.every((tag) => session.tags.includes(tag));
+      return keywordOK && tagOK && selectedTagsOK;
     });
-  }, [sortedSessions, searchKeyword, selectedTag, friendIds, authUser]);
+  }, [sortedSessions, searchKeyword, selectedTag, selectedSearchTags, friendIds, authUser]);
 
   const calendarDays = useMemo(() => {
     const year = calendarDate.getFullYear();
@@ -356,6 +357,23 @@ export default function App() {
   }
 
   function setTag(tag) {
+    if (tag === "all") {
+      setSelectedTag("all");
+      setSelectedSearchTags([]);
+      setCurrentPage("rooms");
+      return;
+    }
+
+    if (GD_TAGS.includes(tag)) {
+      setSelectedSearchTags((current) =>
+        current.includes(tag)
+          ? current.filter((item) => item !== tag)
+          : [...current, tag]
+      );
+      setCurrentPage("rooms");
+      return;
+    }
+
     setSelectedTag(tag);
     setCurrentPage("rooms");
   }
@@ -708,7 +726,19 @@ export default function App() {
               <button className="mainButton" onClick={() => setCurrentPage("rooms")}>検索</button>
             </div>
             <div className="tagArea">
-              {["all", ...GD_TAGS, "available"].map((tag) => <button key={tag} className={selectedTag === tag ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>{tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag}</button>)}
+              {["all", ...GD_TAGS, "available"].map((tag) => {
+                const active = tag === "all"
+                  ? selectedTag === "all" && selectedSearchTags.length === 0
+                  : GD_TAGS.includes(tag)
+                    ? selectedSearchTags.includes(tag)
+                    : selectedTag === tag;
+
+                return (
+                  <button key={tag} className={active ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>
+                    {tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag}
+                  </button>
+                );
+              })}
             </div>
             <div className="homeMenu">
               <button className="homeButton primary" onClick={() => setCurrentPage("create")}><span>募集作成</span><small>GD練習相手を募集</small></button>
@@ -754,7 +784,19 @@ export default function App() {
       )}
 
       {currentPage === "rooms" && (
-        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["all", "available", "online", "friendRelated", "joined", ...GD_TAGS].map((tag) => <button key={tag} className={selectedTag === tag ? "tagButton active" : "tagButton"} onClick={() => setSelectedTag(tag)}>{tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag === "online" ? "オンライン" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}</button>)}</div></div><div className="sessionList">{filteredSessions.length ? filteredSessions.map((s) => renderSessionCard(s)) : <div className="card empty">条件に合う募集が見つかりませんでした</div>}</div></main>
+        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["all", "available", "online", "friendRelated", "joined", ...GD_TAGS].map((tag) => {
+                const active = tag === "all"
+                  ? selectedTag === "all" && selectedSearchTags.length === 0
+                  : GD_TAGS.includes(tag)
+                    ? selectedSearchTags.includes(tag)
+                    : selectedTag === tag;
+
+                return (
+                  <button key={tag} className={active ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>
+                    {tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag === "online" ? "オンライン" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}
+                  </button>
+                );
+              })}</div></div><div className="sessionList">{filteredSessions.length ? filteredSessions.map((s) => renderSessionCard(s)) : <div className="card empty">条件に合う募集が見つかりませんでした</div>}</div></main>
       )}
 
       {currentPage === "friends" && (
