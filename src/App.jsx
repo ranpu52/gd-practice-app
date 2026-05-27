@@ -401,10 +401,6 @@ export default function App() {
     setSelectedCalendarDate(null);
   }
 
-  function moveCalendarYear(amount) {
-    setCalendarDate((current) => new Date(current.getFullYear() + amount, current.getMonth(), 1));
-    setSelectedCalendarDate(null);
-  }
 
   function resetCalendarToCurrentMonth() {
     setCalendarDate(new Date());
@@ -856,16 +852,14 @@ export default function App() {
               <button className="mainButton" onClick={() => setCurrentPage("rooms")}>検索</button>
             </div>
             <div className="tagArea">
-              {["all", ...GD_TAGS, "available"].map((tag) => {
-                const active = tag === "all"
-                  ? selectedTag === "all" && selectedSearchTags.length === 0
-                  : GD_TAGS.includes(tag)
-                    ? selectedSearchTags.includes(tag)
-                    : selectedTag === tag;
+              {[...GD_TAGS, "available"].map((tag) => {
+                const active = GD_TAGS.includes(tag)
+                  ? selectedSearchTags.includes(tag)
+                  : selectedTag === tag;
 
                 return (
                   <button key={tag} className={active ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>
-                    {tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag}
+                    {tag === "available" ? "空きあり" : tag}
                   </button>
                 );
               })}
@@ -881,11 +875,9 @@ export default function App() {
           </section>
           <section className="card calendarCard">
             <div className="calendarHeader">
-              <button className="subButton" onClick={() => moveCalendarYear(-1)}>前年</button>
               <button className="subButton" onClick={() => moveCalendarMonth(-1)}>前月</button>
               <h2>{calendarDate.getFullYear()}年 {calendarDate.getMonth() + 1}月のGD練習</h2>
               <button className="subButton" onClick={() => moveCalendarMonth(1)}>次月</button>
-              <button className="subButton" onClick={() => moveCalendarYear(1)}>翌年</button>
               <button className="mainButton" onClick={resetCalendarToCurrentMonth}>今月</button>
             </div>
             <p className="settingText">色付きの日＝募集あり</p>
@@ -928,16 +920,14 @@ export default function App() {
       )}
 
       {currentPage === "rooms" && (
-        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["all", "available", "friendRelated", "joined", ...GD_TAGS].map((tag) => {
-                const active = tag === "all"
-                  ? selectedTag === "all" && selectedSearchTags.length === 0
-                  : GD_TAGS.includes(tag)
-                    ? selectedSearchTags.includes(tag)
-                    : selectedTag === tag;
+        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["available", "friendRelated", "joined", ...GD_TAGS].map((tag) => {
+                const active = GD_TAGS.includes(tag)
+                  ? selectedSearchTags.includes(tag)
+                  : selectedTag === tag;
 
                 return (
                   <button key={tag} className={active ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>
-                    {tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}
+                    {tag === "available" ? "空きあり" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}
                   </button>
                 );
               })}</div></div><div className="sessionList">{filteredSessions.length ? filteredSessions.map((s) => renderSessionCard(s)) : <div className="card empty">条件に合う募集が見つかりませんでした</div>}</div></main>
@@ -994,8 +984,8 @@ button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
 .homeButton.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 .homeButton span { font-size:20px; }
 .homeButton small { opacity:.85; font-weight:700; }
-h2 { margin:0 0 16px; font-size:28px; color:var(--text); }
-h3 { margin:12px 0 8px; font-size:22px; color:var(--text); }
+h2 { margin:0 0 16px; font-size:28px; color:var(--text); text-align:center; }
+h3 { margin:12px 0 8px; font-size:22px; color:var(--text); text-align:center; }
 .formArea,.participants,.sessionList { display:flex; flex-direction:column; gap:12px; }
 label { display:flex; flex-direction:column; gap:8px; font-weight:800; color:var(--text); text-align:left; }
 input,textarea,select { width:100%; border:1px solid var(--border); border-radius:16px; padding:14px 15px; outline:none; background:#fbfdff; color:#111827; font-weight:700; min-height:48px; }
