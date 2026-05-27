@@ -317,7 +317,8 @@ export default function App() {
       return;
     }
 
-    alert("登録できました。ログインできる場合はそのまま進めます。確認メールが届いた場合は確認してください。");
+    alert("登録できました。ログイン画面に切り替えてログインしてください。");
+    setAuthMode("login");
   }
 
   async function signIn() {
@@ -359,6 +360,34 @@ export default function App() {
     }
 
     if (data) {
+      if (!data.friend_code) {
+        const newCode = createFriendCode();
+
+        const { data: updatedProfile, error: updateError } = await supabase
+          .from("user_profiles")
+          .update({
+            friend_code: newCode,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", authUser.id)
+          .select()
+          .single();
+
+        if (updateError) {
+          console.error(updateError);
+          return;
+        }
+
+        setProfile(updatedProfile);
+        setProfileDraft({
+          name: updatedProfile.name,
+          hasZoomLicense: updatedProfile.has_zoom_license,
+        });
+        setIsEditingProfile(updatedProfile.name === "未設定");
+        await loadProfiles();
+        return;
+      }
+
       setProfile(data);
       setProfileDraft({
         name: data.name,
@@ -368,30 +397,43 @@ export default function App() {
       return;
     }
 
-    const newProfile = {
-      id: authUser.id,
-      friend_code: createFriendCode(),
-      name: "未設定",
-      has_zoom_license: false,
-    };
+    let insertedProfile = null;
+    let insertError = null;
 
-    const { data: inserted, error: insertError } = await supabase
-      .from("user_profiles")
-      .insert(newProfile)
-      .select()
-      .single();
+    for (let i = 0; i < 5; i++) {
+      const newProfile = {
+        id: authUser.id,
+        friend_code: createFriendCode(),
+        name: "未設定",
+        has_zoom_license: false,
+      };
+
+      const result = await supabase
+        .from("user_profiles")
+        .insert(newProfile)
+        .select()
+        .single();
+
+      insertedProfile = result.data;
+      insertError = result.error;
+
+      if (!insertError) break;
+
+      console.error(insertError);
+    }
 
     if (insertError) {
-      console.error(insertError);
+      alert("プロフィール作成に失敗しました。少し時間を置いて再読み込みしてください。");
       return;
     }
 
-    setProfile(inserted);
+    setProfile(insertedProfile);
     setProfileDraft({
-      name: inserted.name,
-      hasZoomLicense: inserted.has_zoom_license,
+      name: insertedProfile.name,
+      hasZoomLicense: insertedProfile.has_zoom_license,
     });
     setIsEditingProfile(true);
+    await loadProfiles();
   }
 
   async function loadEverything() {
@@ -732,7 +774,7 @@ export default function App() {
   }
 
   async function resetAllSessions() {
-    const ok = confirm("すべての募集を削除して初期状態に戻しますか？");
+    const ok = confirm("自分が作成した募集をすべて削除しますか？");
     if (!ok) return;
 
     const { error } = await supabase
@@ -1359,9 +1401,10 @@ export default function App() {
 
             <div className="friendIdBox">
               <span>あなたのフレンドID</span>
-              <strong>{profile?.friend_code || "読み込み中"}</strong>
+              <strong>{profile?.friend_code || "作成中..."}</strong>
               <button
                 className="subButton"
+                disabled={!profile?.friend_code}
                 onClick={() => navigator.clipboard.writeText(profile?.friend_code || "")}
               >
                 IDをコピー
@@ -1526,7 +1569,7 @@ export default function App() {
 
                 <p>
                   <span>フレンドID：</span>
-                  <strong>{profile?.friend_code}</strong>
+                  <strong>{profile?.friend_code || "作成中..."}</strong>
                 </p>
 
                 <p>
