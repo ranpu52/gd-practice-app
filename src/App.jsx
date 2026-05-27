@@ -1017,6 +1017,9 @@ textarea { min-height:96px; resize:vertical; }
 .buttonRow,.searchRow,.smallButtonRow,.tagArea { display:flex; gap:10px; flex-wrap:wrap; }
 .searchRow input,.homeSearch input { flex:1; }
 .listHeader,.sessionTop,.participant,.friendCard,.friendIdBox,.calendarSessionItem,.cardHeader { display:flex; justify-content:space-between; gap:14px; align-items:center; }
+.listHeader { position:relative; justify-content:center; align-items:center; text-align:center; min-height:136px; }
+.listHeader > div:first-child { width:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.listHeader .countBox { position:absolute; right:28px; top:50%; transform:translateY(-50%); }
 .listHeader p,.settingText,.meta { margin:6px 0; color:var(--subtext); font-weight:700; }
 .countBox { background:var(--accent-soft); color:var(--accent); border:1px solid #bfdbfe; border-radius:999px; padding:10px 16px; font-weight:900; white-space:nowrap; }
 .dateHero { display:inline-flex; margin:0 0 10px; padding:10px 16px; border-radius:999px; background:var(--accent); color:#fff; font-size:20px; font-weight:950; }
@@ -1059,6 +1062,8 @@ textarea { min-height:96px; resize:vertical; }
 .calendarResult { margin-top:8px; display:flex; flex-direction:column; gap:10px; }
 .homeLogoutArea { margin-top:18px; display:flex; justify-content:center; }
 .empty { text-align:center; color:var(--subtext); font-weight:800; }
-@media (max-width:860px) { .app { padding:14px; } .hero,.homeMenu,.summaryGrid,.sessionTop,.createForm,.listHeader,.buttonRow,.searchRow,.smallButtonRow,.friendIdBox,.friendCard,.participant,.calendarSessionItem,.homeSearch { display:flex; flex-direction:column; align-items:stretch; }
+@media (max-width:860px) { .app { padding:14px; } .hero,.homeMenu,.summaryGrid,.sessionTop,.createForm,.buttonRow,.searchRow,.smallButtonRow,.friendIdBox,.friendCard,.participant,.calendarSessionItem,.homeSearch { display:flex; flex-direction:column; align-items:stretch; }
+  .listHeader { display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .listHeader .countBox { position:static; transform:none; margin-top:8px; }
   .calendarHeader { display:flex; flex-direction:column; align-items:stretch; } .appTitle { font-size:32px; } .actions { width:100%; } .countBox { width:fit-content; } .gdInfoGrid { grid-template-columns:1fr; } .calendarWeekdays,.calendarGrid { gap:5px; } .calendarBlank,.calendarDay { min-height:52px; border-radius:12px; } }
 `;
