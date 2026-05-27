@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -7,39 +7,60 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase =
   supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-const STORAGE_KEYS = {
-  profile: "gd_profile_v5",
-};
-
 const EVENT_TYPES = ["GD練習会", "ES添削会", "模擬面接会"];
 
-function createId() {
-  if (globalThis.crypto && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return String(Date.now()) + Math.random().toString(16).slice(2);
-}
-
-function loadStorage(key, defaultValue) {
-  try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : defaultValue;
-  } catch {
-    return defaultValue;
-  }
-}
-
-function saveStorage(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+function createFriendCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
 function formatDateTime(session) {
-  if (!session.monthDay && !session.time) {
-    return "日時未設定";
-  }
-
+  if (!session.monthDay && !session.time) return "日時未設定";
   return `${session.monthDay || ""} ${session.time || ""}`.trim();
+}
+
+function getSessionDate(session) {
+  const monthDayMatch = String(session.monthDay || "").match(/^(\d{1,2})\/(\d{1,2})$/);
+  const timeMatch = String(session.time || "").match(/^(\d{1,2}):(\d{2})$/);
+
+  if (!monthDayMatch || !timeMatch) return null;
+
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = Number(monthDayMatch[1]) - 1;
+  const day = Number(monthDayMatch[2]);
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+
+  const date = new Date(year, month, day, hour, minute, 0);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getDeleteDate(session) {
+  const sessionDate = getSessionDate(session);
+  if (!sessionDate) return null;
+
+  const deleteDate = new Date(sessionDate);
+  deleteDate.setHours(deleteDate.getHours() + 10);
+  return deleteDate;
+}
+
+function isExpiredSession(session) {
+  const deleteDate = getDeleteDate(session);
+  if (!deleteDate) return false;
+  return new Date() >= deleteDate;
+}
+
+function formatDeleteDate(session) {
+  const deleteDate = getDeleteDate(session);
+
+  if (!deleteDate) return "削除予定：日時未設定";
+
+  const month = deleteDate.getMonth() + 1;
+  const day = deleteDate.getDate();
+  const hour = String(deleteDate.getHours()).padStart(2, "0");
+  const minute = String(deleteDate.getMinutes()).padStart(2, "0");
+
+  return `削除予定：${month}/${day} ${hour}:${minute}`;
 }
 
 function getNotificationStatus() {
@@ -64,6 +85,8 @@ function fromSupabase(row) {
     memo: row.memo || "",
     createdBy: row.created_by,
     createdByName: row.created_by_name,
+    ownerUserId: row.owner_user_id,
+    visibility: row.visibility || "public",
     participants: Array.isArray(row.participants) ? row.participants : [],
     observers: Array.isArray(row.observers) ? row.observers : [],
     createdAt: row.created_at,
@@ -85,25 +108,61 @@ function toSupabase(session) {
     observers: session.observers || [],
     created_by: session.createdBy,
     created_by_name: session.createdByName,
+    owner_user_id: session.ownerUserId,
+    visibility: session.visibility || "public",
   };
 }
 
+function buildLineShareText(session) {
+  const appUrl = window.location.origin;
+
+  return [
+    "【就活練習会の募集】",
+    `種類：${session.type}`,
+    `タイトル：${session.title}`,
+    `日時：${formatDateTime(session)}`,
+    `内容：${session.theme}`,
+    `公開範囲：${session.visibility === "friends" ? "フレンド限定" : "全員公開"}`,
+    `募集人数：${session.participants.length}/${session.maxParticipants}人`,
+    `オブザーバー：${session.observers.length}/${session.maxObservers}人`,
+    "",
+    `参加はこちら：${appUrl}`,
+  ].join("\n");
+}
+
+function shareSessionToLine(session) {
+  const text = buildLineShareText(session);
+  const encodedText = encodeURIComponent(text);
+  const lineUrl = `https://line.me/R/msg/text/?${encodedText}`;
+  window.open(lineUrl, "_blank", "noopener,noreferrer");
+}
+
 export default function App() {
+  const [authUser, setAuthUser] = useState(null);
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({
+    email: "",
+    password: "",
+  });
+
   const [currentPage, setCurrentPage] = useState("home");
   const [sessions, setSessions] = useState([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [dbError, setDbError] = useState("");
 
-  const [profile, setProfile] = useState(() =>
-    loadStorage(STORAGE_KEYS.profile, {
-      id: createId(),
-      name: "",
-      hasZoomLicense: false,
-    })
-  );
+  const [profile, setProfile] = useState(null);
+  const [profileDraft, setProfileDraft] = useState({
+    name: "",
+    hasZoomLicense: false,
+  });
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  const [profileDraft, setProfileDraft] = useState(profile);
-  const [isEditingProfile, setIsEditingProfile] = useState(!profile.name);
+  const [allProfiles, setAllProfiles] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
+  const [friendCodeInput, setFriendCodeInput] = useState("");
+  const [foundProfile, setFoundProfile] = useState(null);
+  const [friendMessage, setFriendMessage] = useState("");
+
   const [notificationStatus, setNotificationStatus] = useState(getNotificationStatus);
 
   const [newSession, setNewSession] = useState({
@@ -113,23 +172,39 @@ export default function App() {
     monthDay: "",
     time: "",
     maxParticipants: 6,
+    visibility: "public",
     zoomUrl: "",
     memo: "",
   });
 
   useEffect(() => {
-    saveStorage(STORAGE_KEYS.profile, profile);
-  }, [profile]);
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data }) => {
+      setAuthUser(data.session?.user || null);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthUser(session?.user || null);
+    });
+
+    return () => {
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
-    loadSessions();
+    if (!authUser) return;
 
-    if (!supabase) {
-      return;
-    }
+    initializeUser();
+    loadEverything();
+
+    const timer = setInterval(() => {
+      loadEverything();
+    }, 60 * 1000);
 
     const channel = supabase
-      .channel("gd_sessions_changes")
+      .channel("app_changes")
       .on(
         "postgres_changes",
         {
@@ -137,23 +212,241 @@ export default function App() {
           schema: "public",
           table: "gd_sessions",
         },
-        () => {
-          loadSessions();
-        }
+        () => loadSessions()
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friend_requests",
+        },
+        () => loadFriendRequests()
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "user_profiles",
+        },
+        () => loadProfiles()
       )
       .subscribe();
 
     return () => {
+      clearInterval(timer);
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [authUser]);
 
-  async function loadSessions() {
-    if (!supabase) {
-      setDbError("Supabaseの環境変数が設定されていません。");
+  const friendIds = useMemo(() => {
+    if (!authUser) return new Set();
+
+    const ids = new Set();
+
+    friendRequests
+      .filter((request) => request.status === "accepted")
+      .forEach((request) => {
+        if (request.from_user_id === authUser.id) ids.add(request.to_user_id);
+        if (request.to_user_id === authUser.id) ids.add(request.from_user_id);
+      });
+
+    return ids;
+  }, [friendRequests, authUser]);
+
+  const friends = useMemo(() => {
+    return allProfiles.filter((person) => friendIds.has(person.id));
+  }, [allProfiles, friendIds]);
+
+  const incomingRequests = useMemo(() => {
+    if (!authUser) return [];
+
+    return friendRequests.filter(
+      (request) => request.to_user_id === authUser.id && request.status === "pending"
+    );
+  }, [friendRequests, authUser]);
+
+  const outgoingRequests = useMemo(() => {
+    if (!authUser) return [];
+
+    return friendRequests.filter(
+      (request) => request.from_user_id === authUser.id && request.status === "pending"
+    );
+  }, [friendRequests, authUser]);
+
+  const sortedSessions = useMemo(() => {
+    if (!authUser) return sessions;
+
+    function getPriority(session) {
+      const friendParticipates = [...session.participants, ...session.observers].some(
+        (person) => friendIds.has(person.id)
+      );
+
+      const friendCreated = friendIds.has(session.ownerUserId);
+      const mySession = session.ownerUserId === authUser.id;
+
+      if (mySession) return 4;
+      if (friendParticipates) return 3;
+      if (friendCreated) return 2;
+      return 1;
+    }
+
+    return [...sessions].sort((a, b) => {
+      const priorityDiff = getPriority(b) - getPriority(a);
+
+      if (priorityDiff !== 0) return priorityDiff;
+
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
+  }, [sessions, friendIds, authUser]);
+
+  async function signUp() {
+    if (!authForm.email.trim() || !authForm.password.trim()) {
+      alert("メールアドレスとパスワードを入力してください");
       return;
     }
 
+    const { error } = await supabase.auth.signUp({
+      email: authForm.email.trim(),
+      password: authForm.password,
+    });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    alert("登録できました。ログインできる場合はそのまま進めます。確認メールが届いた場合は確認してください。");
+  }
+
+  async function signIn() {
+    if (!authForm.email.trim() || !authForm.password.trim()) {
+      alert("メールアドレスとパスワードを入力してください");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email: authForm.email.trim(),
+      password: authForm.password,
+    });
+
+    if (error) {
+      alert(error.message);
+    }
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setAuthUser(null);
+    setProfile(null);
+    setSessions([]);
+    setCurrentPage("home");
+  }
+
+  async function initializeUser() {
+    if (!authUser) return;
+
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .select("*")
+      .eq("id", authUser.id)
+      .maybeSingle();
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    if (data) {
+      setProfile(data);
+      setProfileDraft({
+        name: data.name,
+        hasZoomLicense: data.has_zoom_license,
+      });
+      setIsEditingProfile(data.name === "未設定");
+      return;
+    }
+
+    const newProfile = {
+      id: authUser.id,
+      friend_code: createFriendCode(),
+      name: "未設定",
+      has_zoom_license: false,
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from("user_profiles")
+      .insert(newProfile)
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error(insertError);
+      return;
+    }
+
+    setProfile(inserted);
+    setProfileDraft({
+      name: inserted.name,
+      hasZoomLicense: inserted.has_zoom_license,
+    });
+    setIsEditingProfile(true);
+  }
+
+  async function loadEverything() {
+    await Promise.all([loadProfiles(), loadFriendRequests(), loadSessions()]);
+  }
+
+  async function loadProfiles() {
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setAllProfiles(data || []);
+  }
+
+  async function loadFriendRequests() {
+    if (!authUser) return;
+
+    const { data, error } = await supabase
+      .from("friend_requests")
+      .select("*")
+      .or(`from_user_id.eq.${authUser.id},to_user_id.eq.${authUser.id}`)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setFriendRequests(data || []);
+  }
+
+  async function deleteExpiredSessions(targetSessions) {
+    const expiredSessions = targetSessions.filter(isExpiredSession);
+
+    if (expiredSessions.length === 0) return targetSessions;
+
+    const expiredIds = expiredSessions.map((session) => session.id);
+
+    const { error } = await supabase.from("gd_sessions").delete().in("id", expiredIds);
+
+    if (error) {
+      console.error(error);
+      return targetSessions;
+    }
+
+    return targetSessions.filter((session) => !expiredIds.includes(session.id));
+  }
+
+  async function loadSessions() {
     setIsLoadingSessions(true);
     setDbError("");
 
@@ -169,8 +462,54 @@ export default function App() {
       return;
     }
 
-    setSessions((data || []).map(fromSupabase));
+    const loadedSessions = (data || []).map(fromSupabase);
+    const activeSessions = await deleteExpiredSessions(loadedSessions);
+
+    setSessions(activeSessions);
     setIsLoadingSessions(false);
+  }
+
+  async function saveProfile() {
+    if (!profileDraft.name.trim()) {
+      alert("名前を入力してください");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .update({
+        name: profileDraft.name.trim(),
+        has_zoom_license: profileDraft.hasZoomLicense,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", authUser.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error(error);
+      alert("プロフィール保存に失敗しました");
+      return;
+    }
+
+    setProfile(data);
+    setProfileDraft({
+      name: data.name,
+      hasZoomLicense: data.has_zoom_license,
+    });
+    setIsEditingProfile(false);
+    await loadProfiles();
+  }
+
+  function requireProfile() {
+    if (!profile || !profile.name || profile.name === "未設定") {
+      alert("先にプロフィールを登録してください");
+      setCurrentPage("profile");
+      setIsEditingProfile(true);
+      return false;
+    }
+
+    return true;
   }
 
   async function requestNotificationPermission() {
@@ -184,10 +523,7 @@ export default function App() {
     setNotificationStatus(permission);
 
     if (permission === "granted") {
-      sendBrowserNotification(
-        "通知がオンになりました",
-        "募集人数に達したときに通知します。"
-      );
+      sendBrowserNotification("通知がオンになりました", "募集人数に達したときに通知します。");
     }
   }
 
@@ -197,34 +533,6 @@ export default function App() {
     if (Notification.permission === "granted") {
       new Notification(title, { body });
     }
-  }
-
-  function requireProfile() {
-    if (!profile.name.trim()) {
-      alert("先にプロフィールを登録してください");
-      setCurrentPage("profile");
-      setIsEditingProfile(true);
-      return false;
-    }
-
-    return true;
-  }
-
-  function saveProfile() {
-    if (!profileDraft.name.trim()) {
-      alert("名前を入力してください");
-      return;
-    }
-
-    const updatedProfile = {
-      ...profile,
-      name: profileDraft.name.trim(),
-      hasZoomLicense: profileDraft.hasZoomLicense,
-    };
-
-    setProfile(updatedProfile);
-    setProfileDraft(updatedProfile);
-    setIsEditingProfile(false);
   }
 
   async function createSession(event) {
@@ -250,10 +558,12 @@ export default function App() {
       time: newSession.time,
       maxParticipants: Number(newSession.maxParticipants) || 6,
       maxObservers: 1,
+      visibility: newSession.visibility,
       zoomUrl: newSession.zoomUrl.trim(),
       memo: newSession.memo.trim(),
-      createdBy: profile.id,
+      createdBy: authUser.id,
       createdByName: profile.name,
+      ownerUserId: authUser.id,
       participants: [],
       observers: [],
     };
@@ -270,21 +580,7 @@ export default function App() {
       return;
     }
 
-    if (data) {
-      const createdSession = fromSupabase(data);
-
-      setSessions((currentSessions) => {
-        const alreadyExists = currentSessions.some(
-          (currentSession) => currentSession.id === createdSession.id
-        );
-
-        if (alreadyExists) {
-          return currentSessions;
-        }
-
-        return [createdSession, ...currentSessions];
-      });
-    }
+    setSessions((current) => [fromSupabase(data), ...current]);
 
     setNewSession({
       type: "GD練習会",
@@ -293,6 +589,7 @@ export default function App() {
       monthDay: "",
       time: "",
       maxParticipants: 6,
+      visibility: "public",
       zoomUrl: "",
       memo: "",
     });
@@ -301,20 +598,25 @@ export default function App() {
     await loadSessions();
   }
 
+  function canJoinSession(session) {
+    if (session.ownerUserId === authUser.id) return true;
+    if (session.visibility !== "friends") return true;
+    return friendIds.has(session.ownerUserId);
+  }
+
   async function joinSession(sessionId, joinType) {
     if (!requireProfile()) return;
 
     const target = sessions.find((session) => session.id === sessionId);
-
     if (!target) return;
 
-    const alreadyParticipant = target.participants.some(
-      (person) => person.id === profile.id
-    );
+    if (!canJoinSession(target)) {
+      alert("この部屋はフレンド限定です。部屋を作成した人のフレンドだけ参加できます。");
+      return;
+    }
 
-    const alreadyObserver = target.observers.some(
-      (person) => person.id === profile.id
-    );
+    const alreadyParticipant = target.participants.some((person) => person.id === authUser.id);
+    const alreadyObserver = target.observers.some((person) => person.id === authUser.id);
 
     if (alreadyParticipant || alreadyObserver) {
       alert("すでにこの募集に参加しています");
@@ -322,9 +624,9 @@ export default function App() {
     }
 
     const profileData = {
-      id: profile.id,
+      id: authUser.id,
       name: profile.name,
-      hasZoomLicense: profile.hasZoomLicense,
+      hasZoomLicense: profile.has_zoom_license,
     };
 
     let nextParticipants = [...target.participants];
@@ -364,21 +666,12 @@ export default function App() {
       return;
     }
 
-    if (data) {
-      const updatedSession = fromSupabase(data);
-
-      setSessions((currentSessions) =>
-        currentSessions.map((session) =>
-          session.id === updatedSession.id ? updatedSession : session
-        )
-      );
-    }
+    setSessions((current) =>
+      current.map((session) => (session.id === sessionId ? fromSupabase(data) : session))
+    );
 
     if (isNowFull) {
-      sendBrowserNotification(
-        "募集人数に達しました",
-        `「${target.title}」の参加者が集まりました。`
-      );
+      sendBrowserNotification("募集人数に達しました", `「${target.title}」の参加者が集まりました。`);
     }
 
     await loadSessions();
@@ -386,16 +679,10 @@ export default function App() {
 
   async function leaveSession(sessionId) {
     const target = sessions.find((session) => session.id === sessionId);
-
     if (!target) return;
 
-    const nextParticipants = target.participants.filter(
-      (person) => person.id !== profile.id
-    );
-
-    const nextObservers = target.observers.filter(
-      (person) => person.id !== profile.id
-    );
+    const nextParticipants = target.participants.filter((person) => person.id !== authUser.id);
+    const nextObservers = target.observers.filter((person) => person.id !== authUser.id);
 
     const { data, error } = await supabase
       .from("gd_sessions")
@@ -413,37 +700,26 @@ export default function App() {
       return;
     }
 
-    if (data) {
-      const updatedSession = fromSupabase(data);
-
-      setSessions((currentSessions) =>
-        currentSessions.map((session) =>
-          session.id === updatedSession.id ? updatedSession : session
-        )
-      );
-    }
+    setSessions((current) =>
+      current.map((session) => (session.id === sessionId ? fromSupabase(data) : session))
+    );
 
     await loadSessions();
   }
 
   async function deleteSession(sessionId) {
     const target = sessions.find((session) => session.id === sessionId);
-
     if (!target) return;
 
-    if (target.createdBy !== profile.id) {
+    if (target.ownerUserId !== authUser.id) {
       alert("募集を削除できるのは作成者のみです");
       return;
     }
 
     const ok = confirm("この募集を削除しますか？");
-
     if (!ok) return;
 
-    const { error } = await supabase
-      .from("gd_sessions")
-      .delete()
-      .eq("id", sessionId);
+    const { error } = await supabase.from("gd_sessions").delete().eq("id", sessionId);
 
     if (error) {
       console.error(error);
@@ -451,22 +727,18 @@ export default function App() {
       return;
     }
 
-    setSessions((currentSessions) =>
-      currentSessions.filter((session) => session.id !== sessionId)
-    );
-
+    setSessions((current) => current.filter((session) => session.id !== sessionId));
     await loadSessions();
   }
 
   async function resetAllSessions() {
     const ok = confirm("すべての募集を削除して初期状態に戻しますか？");
-
     if (!ok) return;
 
     const { error } = await supabase
       .from("gd_sessions")
       .delete()
-      .neq("id", "00000000-0000-0000-0000-000000000000");
+      .eq("owner_user_id", authUser.id);
 
     if (error) {
       console.error(error);
@@ -474,8 +746,190 @@ export default function App() {
       return;
     }
 
-    setSessions([]);
     await loadSessions();
+  }
+
+  async function searchFriendByCode() {
+    setFriendMessage("");
+    setFoundProfile(null);
+
+    const code = friendCodeInput.trim().toUpperCase();
+
+    if (!code) {
+      alert("フレンドIDを入力してください");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .select("*")
+      .eq("friend_code", code)
+      .maybeSingle();
+
+    if (error) {
+      console.error(error);
+      setFriendMessage("検索に失敗しました。");
+      return;
+    }
+
+    if (!data) {
+      setFriendMessage("該当するユーザーが見つかりませんでした。");
+      return;
+    }
+
+    if (data.id === authUser.id) {
+      setFriendMessage("自分自身にはフレンド申請できません。");
+      return;
+    }
+
+    setFoundProfile(data);
+  }
+
+  async function sendFriendRequest(targetProfile) {
+    const existing = friendRequests.find(
+      (request) =>
+        (request.from_user_id === authUser.id && request.to_user_id === targetProfile.id) ||
+        (request.from_user_id === targetProfile.id && request.to_user_id === authUser.id)
+    );
+
+    if (existing) {
+      if (existing.status === "accepted") {
+        alert("すでにフレンドです");
+      } else {
+        alert("すでに申請中です");
+      }
+      return;
+    }
+
+    const { error } = await supabase.from("friend_requests").insert({
+      from_user_id: authUser.id,
+      to_user_id: targetProfile.id,
+      status: "pending",
+    });
+
+    if (error) {
+      console.error(error);
+      alert("フレンド申請に失敗しました");
+      return;
+    }
+
+    setFoundProfile(null);
+    setFriendCodeInput("");
+    setFriendMessage("フレンド申請を送りました。");
+    await loadFriendRequests();
+  }
+
+  async function acceptFriendRequest(requestId) {
+    const { error } = await supabase
+      .from("friend_requests")
+      .update({ status: "accepted" })
+      .eq("id", requestId);
+
+    if (error) {
+      console.error(error);
+      alert("承認に失敗しました");
+      return;
+    }
+
+    await loadFriendRequests();
+  }
+
+  async function deleteFriendRequest(requestId) {
+    const { error } = await supabase.from("friend_requests").delete().eq("id", requestId);
+
+    if (error) {
+      console.error(error);
+      alert("削除に失敗しました");
+      return;
+    }
+
+    await loadFriendRequests();
+  }
+
+  function getProfileName(userId) {
+    const target = allProfiles.find((person) => person.id === userId);
+    return target?.name || "不明";
+  }
+
+  if (!supabase) {
+    return (
+      <div className="app">
+        <style>{styles}</style>
+        <div className="authCard">
+          <h1>GD Practice Hub</h1>
+          <p>Supabaseの環境変数が設定されていません。</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="app">
+        <style>{styles}</style>
+
+        <main className="authLayout">
+          <div className="authCard">
+            <p className="label">大学生向け就活練習アプリ</p>
+            <h1>GD Practice Hub</h1>
+            <p className="description">
+              ログインすると、募集・参加・フレンド機能が使えます。
+            </p>
+
+            <div className="authTabs">
+              <button
+                className={authMode === "login" ? "choice active" : "choice"}
+                onClick={() => setAuthMode("login")}
+              >
+                ログイン
+              </button>
+              <button
+                className={authMode === "signup" ? "choice active" : "choice"}
+                onClick={() => setAuthMode("signup")}
+              >
+                新規登録
+              </button>
+            </div>
+
+            <div className="formArea">
+              <label>
+                メールアドレス
+                <input
+                  type="email"
+                  value={authForm.email}
+                  onChange={(event) =>
+                    setAuthForm({ ...authForm, email: event.target.value })
+                  }
+                  placeholder="example@email.com"
+                />
+              </label>
+
+              <label>
+                パスワード
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={(event) =>
+                    setAuthForm({ ...authForm, password: event.target.value })
+                  }
+                  placeholder="6文字以上"
+                />
+              </label>
+
+              {authMode === "login" ? (
+                <button className="mainButton full" onClick={signIn}>
+                  ログイン
+                </button>
+              ) : (
+                <button className="mainButton full" onClick={signUp}>
+                  新規登録
+                </button>
+              )}
+            </div>
+          </div>
+        </main>
+      </div>
+    );
   }
 
   return (
@@ -487,18 +941,22 @@ export default function App() {
           <p className="label">大学生向け就活練習アプリ</p>
           <h1>GD Practice Hub</h1>
           <p className="description">
-            GD練習会・ES添削会・模擬面接会を募集できるWebアプリです。
-            友達の募集や参加状況もリアルタイムで共有できます。
+            GD練習会・ES添削会・模擬面接会を募集できます。
+            フレンドがいる部屋は優先表示され、フレンド限定部屋も作成できます。
           </p>
         </div>
 
-        {currentPage !== "home" && (
-          <div className="heroActions">
+        <div className="heroActions">
+          {currentPage !== "home" && (
             <button className="subButton" onClick={() => setCurrentPage("home")}>
               ホームへ戻る
             </button>
-          </div>
-        )}
+          )}
+
+          <button className="dangerButton" onClick={signOut}>
+            ログアウト
+          </button>
+        </div>
       </header>
 
       {dbError && <div className="alert">{dbError}</div>}
@@ -508,7 +966,7 @@ export default function App() {
           <section className="homeCard">
             <h2>ホーム</h2>
             <p>
-              必要な操作を選んでください。プロフィールや通知設定は、必要なときだけ開けます。
+              必要な操作を選んでください。フレンド・プロフィール・通知設定は必要なときだけ開けます。
             </p>
 
             <div className="homeMenu">
@@ -519,7 +977,12 @@ export default function App() {
 
               <button className="homeButton" onClick={() => setCurrentPage("rooms")}>
                 <span>部屋を検索</span>
-                <small>募集中の部屋を見る・参加する</small>
+                <small>フレンドがいる部屋を優先表示</small>
+              </button>
+
+              <button className="homeButton" onClick={() => setCurrentPage("friends")}>
+                <span>フレンド</span>
+                <small>ID検索・申請・承認</small>
               </button>
 
               <button className="homeButton" onClick={() => setCurrentPage("profile")}>
@@ -546,13 +1009,13 @@ export default function App() {
             </div>
 
             <div className="miniCard">
-              <strong>{profile.name ? "登録済み" : "未登録"}</strong>
-              <span>プロフィール</span>
+              <strong>{friends.length}</strong>
+              <span>フレンド</span>
             </div>
 
             <div className="miniCard">
-              <strong>{notificationStatus === "granted" ? "ON" : "OFF"}</strong>
-              <span>通知設定</span>
+              <strong>{profile?.name === "未設定" ? "未登録" : "登録済み"}</strong>
+              <span>プロフィール</span>
             </div>
           </section>
         </main>
@@ -569,10 +1032,7 @@ export default function App() {
                 <select
                   value={newSession.type}
                   onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      type: event.target.value,
-                    })
+                    setNewSession({ ...newSession, type: event.target.value })
                   }
                 >
                   {EVENT_TYPES.map((type) => (
@@ -584,6 +1044,19 @@ export default function App() {
               </label>
 
               <label>
+                公開範囲
+                <select
+                  value={newSession.visibility}
+                  onChange={(event) =>
+                    setNewSession({ ...newSession, visibility: event.target.value })
+                  }
+                >
+                  <option value="public">全員に公開</option>
+                  <option value="friends">フレンド限定</option>
+                </select>
+              </label>
+
+              <label>
                 募集人数
                 <input
                   type="number"
@@ -591,39 +1064,8 @@ export default function App() {
                   max="12"
                   value={newSession.maxParticipants}
                   onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      maxParticipants: event.target.value,
-                    })
+                    setNewSession({ ...newSession, maxParticipants: event.target.value })
                   }
-                />
-              </label>
-
-              <label className="wide">
-                タイトル
-                <input
-                  value={newSession.title}
-                  onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      title: event.target.value,
-                    })
-                  }
-                  placeholder="例：IT業界志望向けGD練習"
-                />
-              </label>
-
-              <label className="wide">
-                内容・テーマ
-                <input
-                  value={newSession.theme}
-                  onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      theme: event.target.value,
-                    })
-                  }
-                  placeholder="例：大学生向けの新サービスを考えよ"
                 />
               </label>
 
@@ -633,10 +1075,7 @@ export default function App() {
                   type="text"
                   value={newSession.monthDay}
                   onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      monthDay: event.target.value,
-                    })
+                    setNewSession({ ...newSession, monthDay: event.target.value })
                   }
                   placeholder="例：6/1"
                 />
@@ -648,11 +1087,30 @@ export default function App() {
                   type="time"
                   value={newSession.time}
                   onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      time: event.target.value,
-                    })
+                    setNewSession({ ...newSession, time: event.target.value })
                   }
+                />
+              </label>
+
+              <label className="wide">
+                タイトル
+                <input
+                  value={newSession.title}
+                  onChange={(event) =>
+                    setNewSession({ ...newSession, title: event.target.value })
+                  }
+                  placeholder="例：IT業界志望向けGD練習"
+                />
+              </label>
+
+              <label className="wide">
+                内容・テーマ
+                <input
+                  value={newSession.theme}
+                  onChange={(event) =>
+                    setNewSession({ ...newSession, theme: event.target.value })
+                  }
+                  placeholder="例：大学生向けの新サービスを考えよ"
                 />
               </label>
 
@@ -661,10 +1119,7 @@ export default function App() {
                 <input
                   value={newSession.zoomUrl}
                   onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      zoomUrl: event.target.value,
-                    })
+                    setNewSession({ ...newSession, zoomUrl: event.target.value })
                   }
                   placeholder="後で入力でもOK"
                 />
@@ -675,17 +1130,14 @@ export default function App() {
                 <textarea
                   value={newSession.memo}
                   onChange={(event) =>
-                    setNewSession({
-                      ...newSession,
-                      memo: event.target.value,
-                    })
+                    setNewSession({ ...newSession, memo: event.target.value })
                   }
                   placeholder="例：初心者歓迎、カメラON推奨など"
                 />
               </label>
 
               <div className="observerNote wide">
-                オブザーバー希望枠は1名までです。参加者とは別に、見学・フィードバック役として参加できます。
+                オブザーバー希望枠は1名までです。フレンド限定の場合、部屋主のフレンドだけ参加できます。
               </div>
 
               <div className="buttonRow wide">
@@ -693,11 +1145,7 @@ export default function App() {
                   作成する
                 </button>
 
-                <button
-                  className="subButton"
-                  type="button"
-                  onClick={() => setCurrentPage("home")}
-                >
+                <button className="subButton" type="button" onClick={() => setCurrentPage("home")}>
                   キャンセル
                 </button>
               </div>
@@ -711,7 +1159,7 @@ export default function App() {
           <div className="card listHeader">
             <div>
               <h2>部屋を検索</h2>
-              <p>現在募集されている就活練習会を一覧で確認できます。</p>
+              <p>フレンドが作成・参加している部屋が優先的に表示されます。</p>
             </div>
 
             <div className="countBox">
@@ -720,35 +1168,32 @@ export default function App() {
           </div>
 
           <div className="sessionList">
-            {sessions.length === 0 ? (
+            {sortedSessions.length === 0 ? (
               <div className="card empty">募集は現在ありません。</div>
             ) : (
-              sessions.map((session) => {
-                const isOwner = session.createdBy === profile.id;
+              sortedSessions.map((session) => {
+                const isOwner = session.ownerUserId === authUser.id;
+                const isFriendLimited = session.visibility === "friends";
+                const canJoin = canJoinSession(session);
 
                 const hasJoinedAsParticipant = session.participants.some(
-                  (person) => person.id === profile.id
+                  (person) => person.id === authUser.id
                 );
 
                 const hasJoinedAsObserver = session.observers.some(
-                  (person) => person.id === profile.id
+                  (person) => person.id === authUser.id
                 );
 
                 const hasJoined = hasJoinedAsParticipant || hasJoinedAsObserver;
-
-                const isFull =
-                  session.participants.length >= session.maxParticipants;
-
-                const isObserverFull =
-                  session.observers.length >= session.maxObservers;
+                const isFull = session.participants.length >= session.maxParticipants;
+                const isObserverFull = session.observers.length >= session.maxObservers;
 
                 const allMembers = [...session.participants, ...session.observers];
-
-                const zoomHosts = allMembers.filter(
-                  (person) => person.hasZoomLicense
-                );
-
+                const zoomHosts = allMembers.filter((person) => person.hasZoomLicense);
                 const hasZoomHost = zoomHosts.length > 0;
+
+                const friendInRoom = allMembers.some((person) => friendIds.has(person.id));
+                const friendCreated = friendIds.has(session.ownerUserId);
 
                 return (
                   <div className="card sessionCard" key={session.id}>
@@ -757,30 +1202,31 @@ export default function App() {
                         <div className="badgeArea">
                           <span className="badge blue">{session.type}</span>
 
+                          <span className={isFriendLimited ? "badge yellow" : "badge blue"}>
+                            {isFriendLimited ? "フレンド限定" : "全員公開"}
+                          </span>
+
+                          {friendCreated && <span className="badge green">フレンド作成</span>}
+                          {friendInRoom && <span className="badge green">フレンド参加中</span>}
+
                           <span className={hasZoomHost ? "badge green" : "badge yellow"}>
-                            {hasZoomHost
-                              ? "Zoomホスト候補あり"
-                              : "Zoomホスト候補なし"}
+                            {hasZoomHost ? "Zoomホスト候補あり" : "Zoomホスト候補なし"}
                           </span>
 
                           <span className={isFull ? "badge green" : "badge"}>
-                            参加者 {session.participants.length}/
-                            {session.maxParticipants}人
+                            参加者 {session.participants.length}/{session.maxParticipants}人
                           </span>
 
                           <span className={isObserverFull ? "badge green" : "badge blue"}>
-                            オブザーバー {session.observers.length}/
-                            {session.maxObservers}人
+                            オブザーバー {session.observers.length}/{session.maxObservers}人
                           </span>
                         </div>
 
                         <h3>{session.title}</h3>
-
                         <p className="theme">{session.theme}</p>
-
                         <p className="meta">作成者：{session.createdByName}</p>
-
                         <p className="meta">日時：{formatDateTime(session)}</p>
+                        <p className="meta">{formatDeleteDate(session)}</p>
 
                         {session.zoomUrl ? (
                           <p className="meta">
@@ -794,21 +1240,24 @@ export default function App() {
                         )}
 
                         {session.memo && <p className="memo">{session.memo}</p>}
+
+                        {!canJoin && (
+                          <p className="lockedText">
+                            この部屋はフレンド限定です。部屋主のフレンドのみ参加できます。
+                          </p>
+                        )}
                       </div>
 
                       <div className="actions">
                         {hasJoined ? (
-                          <button
-                            className="subButton"
-                            onClick={() => leaveSession(session.id)}
-                          >
+                          <button className="subButton" onClick={() => leaveSession(session.id)}>
                             参加を取り消す
                           </button>
                         ) : (
                           <>
                             <button
                               className="mainButton"
-                              disabled={isFull}
+                              disabled={isFull || !canJoin}
                               onClick={() => joinSession(session.id, "participant")}
                             >
                               {isFull ? "満員" : "参加する"}
@@ -816,21 +1265,20 @@ export default function App() {
 
                             <button
                               className="observerButton"
-                              disabled={isObserverFull}
+                              disabled={isObserverFull || !canJoin}
                               onClick={() => joinSession(session.id, "observer")}
                             >
-                              {isObserverFull
-                                ? "オブザーバー満員"
-                                : "オブザーバー希望"}
+                              {isObserverFull ? "オブザーバー満員" : "オブザーバー希望"}
                             </button>
                           </>
                         )}
 
+                        <button className="lineButton" onClick={() => shareSessionToLine(session)}>
+                          LINEで共有
+                        </button>
+
                         {isOwner ? (
-                          <button
-                            className="dangerButton"
-                            onClick={() => deleteSession(session.id)}
-                          >
+                          <button className="dangerButton" onClick={() => deleteSession(session.id)}>
                             削除
                           </button>
                         ) : (
@@ -850,15 +1298,8 @@ export default function App() {
                             {session.participants.map((person) => (
                               <div className="participant" key={person.id}>
                                 <strong>{person.name}</strong>
-
-                                <span
-                                  className={
-                                    person.hasZoomLicense ? "badge green" : "badge"
-                                  }
-                                >
-                                  {person.hasZoomLicense
-                                    ? "Zoomライセンスあり"
-                                    : "Zoomライセンスなし"}
+                                <span className={person.hasZoomLicense ? "badge green" : "badge"}>
+                                  {person.hasZoomLicense ? "Zoomライセンスあり" : "Zoomライセンスなし"}
                                 </span>
                               </div>
                             ))}
@@ -876,15 +1317,8 @@ export default function App() {
                             {session.observers.map((person) => (
                               <div className="participant" key={person.id}>
                                 <strong>{person.name}</strong>
-
-                                <span
-                                  className={
-                                    person.hasZoomLicense ? "badge green" : "badge"
-                                  }
-                                >
-                                  {person.hasZoomLicense
-                                    ? "Zoomライセンスあり"
-                                    : "Zoomライセンスなし"}
+                                <span className={person.hasZoomLicense ? "badge green" : "badge"}>
+                                  {person.hasZoomLicense ? "Zoomライセンスあり" : "Zoomライセンスなし"}
                                 </span>
                               </div>
                             ))}
@@ -899,10 +1333,7 @@ export default function App() {
                       {hasZoomHost ? (
                         <div className="zoomBox ok">
                           <strong>Zoomを開ける人がいます。</strong>
-                          <p>
-                            ホスト候補：
-                            {zoomHosts.map((person) => person.name).join("、")}
-                          </p>
+                          <p>ホスト候補：{zoomHosts.map((person) => person.name).join("、")}</p>
                         </div>
                       ) : (
                         <div className="zoomBox warning">
@@ -917,6 +1348,115 @@ export default function App() {
                 );
               })
             )}
+          </div>
+        </main>
+      )}
+
+      {currentPage === "friends" && (
+        <main className="singleLayout">
+          <div className="card">
+            <h2>フレンド</h2>
+
+            <div className="friendIdBox">
+              <span>あなたのフレンドID</span>
+              <strong>{profile?.friend_code || "読み込み中"}</strong>
+              <button
+                className="subButton"
+                onClick={() => navigator.clipboard.writeText(profile?.friend_code || "")}
+              >
+                IDをコピー
+              </button>
+            </div>
+
+            <div className="settingSection">
+              <h3>IDで検索</h3>
+
+              <div className="searchRow">
+                <input
+                  value={friendCodeInput}
+                  onChange={(event) => setFriendCodeInput(event.target.value.toUpperCase())}
+                  placeholder="例：ABC123"
+                />
+                <button className="mainButton" onClick={searchFriendByCode}>
+                  検索
+                </button>
+              </div>
+
+              {friendMessage && <p className="settingText">{friendMessage}</p>}
+
+              {foundProfile && (
+                <div className="friendCard">
+                  <strong>{foundProfile.name}</strong>
+                  <span>ID：{foundProfile.friend_code}</span>
+                  <button className="mainButton" onClick={() => sendFriendRequest(foundProfile)}>
+                    フレンド申請を送る
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="settingSection">
+              <h3>届いた申請</h3>
+
+              {incomingRequests.length === 0 ? (
+                <p className="emptyText">届いている申請はありません。</p>
+              ) : (
+                <div className="participants">
+                  {incomingRequests.map((request) => (
+                    <div className="participant" key={request.id}>
+                      <strong>{getProfileName(request.from_user_id)}</strong>
+
+                      <div className="smallButtonRow">
+                        <button className="mainButton" onClick={() => acceptFriendRequest(request.id)}>
+                          承認
+                        </button>
+                        <button className="dangerButton" onClick={() => deleteFriendRequest(request.id)}>
+                          拒否
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="settingSection">
+              <h3>申請中</h3>
+
+              {outgoingRequests.length === 0 ? (
+                <p className="emptyText">送信中の申請はありません。</p>
+              ) : (
+                <div className="participants">
+                  {outgoingRequests.map((request) => (
+                    <div className="participant" key={request.id}>
+                      <strong>{getProfileName(request.to_user_id)}</strong>
+                      <button className="dangerButton" onClick={() => deleteFriendRequest(request.id)}>
+                        取り消す
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="settingSection">
+              <h3>フレンド一覧</h3>
+
+              {friends.length === 0 ? (
+                <p className="emptyText">まだフレンドはいません。</p>
+              ) : (
+                <div className="participants">
+                  {friends.map((friend) => (
+                    <div className="participant" key={friend.id}>
+                      <strong>{friend.name}</strong>
+                      <span className={friend.has_zoom_license ? "badge green" : "badge"}>
+                        {friend.has_zoom_license ? "Zoomライセンスあり" : "Zoomライセンスなし"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </main>
       )}
@@ -941,10 +1481,7 @@ export default function App() {
                   <input
                     value={profileDraft.name}
                     onChange={(event) =>
-                      setProfileDraft({
-                        ...profileDraft,
-                        name: event.target.value,
-                      })
+                      setProfileDraft({ ...profileDraft, name: event.target.value })
                     }
                     placeholder="例：田中太郎"
                   />
@@ -958,10 +1495,7 @@ export default function App() {
                       type="button"
                       className={profileDraft.hasZoomLicense ? "choice active" : "choice"}
                       onClick={() =>
-                        setProfileDraft({
-                          ...profileDraft,
-                          hasZoomLicense: true,
-                        })
+                        setProfileDraft({ ...profileDraft, hasZoomLicense: true })
                       }
                     >
                       持っている
@@ -971,10 +1505,7 @@ export default function App() {
                       type="button"
                       className={!profileDraft.hasZoomLicense ? "choice active" : "choice"}
                       onClick={() =>
-                        setProfileDraft({
-                          ...profileDraft,
-                          hasZoomLicense: false,
-                        })
+                        setProfileDraft({ ...profileDraft, hasZoomLicense: false })
                       }
                     >
                       持っていない
@@ -990,15 +1521,18 @@ export default function App() {
               <div className="profileBox">
                 <p>
                   <span>名前：</span>
-                  <strong>{profile.name}</strong>
+                  <strong>{profile?.name}</strong>
+                </p>
+
+                <p>
+                  <span>フレンドID：</span>
+                  <strong>{profile?.friend_code}</strong>
                 </p>
 
                 <p>
                   <span>Zoom：</span>
                   <strong>
-                    {profile.hasZoomLicense
-                      ? "Zoomライセンスあり"
-                      : "Zoomライセンスなし"}
+                    {profile?.has_zoom_license ? "Zoomライセンスあり" : "Zoomライセンスなし"}
                   </strong>
                 </p>
               </div>
@@ -1014,9 +1548,7 @@ export default function App() {
 
             <div className="settingSection">
               <h3>通知設定</h3>
-              <p className="settingText">
-                募集人数に達したときに、ブラウザ通知を出します。
-              </p>
+              <p className="settingText">募集人数に達したときに、ブラウザ通知を出します。</p>
 
               {notificationStatus === "unsupported" ? (
                 <p className="warningText">このブラウザは通知に対応していません。</p>
@@ -1026,10 +1558,7 @@ export default function App() {
                   <button
                     className="subButton full"
                     onClick={() =>
-                      sendBrowserNotification(
-                        "テスト通知",
-                        "GD Practice Hubの通知テストです。"
-                      )
+                      sendBrowserNotification("テスト通知", "GD Practice Hubの通知テストです。")
                     }
                   >
                     テスト通知を送る
@@ -1049,12 +1578,10 @@ export default function App() {
 
             <div className="settingSection">
               <h3>データ管理</h3>
-              <p className="settingText">
-                Supabase上に保存されている募集データを初期化できます。
-              </p>
+              <p className="settingText">自分が作成した募集だけ初期化できます。</p>
 
               <button className="dangerButton full" onClick={resetAllSessions}>
-                募集を初期化する
+                自分の募集を初期化する
               </button>
             </div>
           </div>
@@ -1067,12 +1594,14 @@ export default function App() {
             <h2>使い方について</h2>
 
             <ol className="steps large">
+              <li>メールアドレスとパスワードでログインします。</li>
               <li>プロフィールから名前とZoomライセンスの有無を登録します。</li>
-              <li>部屋を作成から、GD練習会・ES添削会・模擬面接会を選んで募集できます。</li>
-              <li>部屋を検索から、募集中の部屋に参加できます。</li>
-              <li>参加者として参加するか、オブザーバー希望として参加するか選べます。</li>
-              <li>オブザーバー枠は1人までです。</li>
-              <li>友達が作った募集や参加状況も共有されます。</li>
+              <li>フレンド画面で自分のIDを共有し、相手に申請してもらえます。</li>
+              <li>部屋作成では、全員公開またはフレンド限定を選べます。</li>
+              <li>フレンド限定部屋は、部屋主のフレンドだけ参加できます。</li>
+              <li>部屋検索では、フレンドが作成・参加している部屋が優先表示されます。</li>
+              <li>LINEで共有ボタンから友達やグループに募集を送れます。</li>
+              <li>募集は指定日時の10時間後に自動削除されます。</li>
             </ol>
           </div>
         </main>
@@ -1144,6 +1673,31 @@ button:disabled {
   font-weight: 800;
 }
 
+.authLayout {
+  min-height: 92vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.authCard {
+  width: 100%;
+  max-width: 560px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  padding: 36px;
+  box-shadow: 0 10px 30px rgba(79, 110, 247, 0.06);
+  text-align: center;
+}
+
+.authTabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 24px 0;
+}
+
 .hero {
   max-width: 1180px;
   margin: 0 auto 20px;
@@ -1164,6 +1718,13 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   text-align: center;
+}
+
+.heroActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .label {
@@ -1306,7 +1867,8 @@ h1 {
 .cardHeader,
 .listHeader,
 .sessionTop,
-.participant {
+.participant,
+.friendCard {
   display: flex;
   justify-content: space-between;
   gap: 14px;
@@ -1345,6 +1907,7 @@ label {
   gap: 8px;
   font-weight: 800;
   color: var(--text);
+  text-align: left;
 }
 
 input,
@@ -1394,7 +1957,8 @@ textarea {
 .mainButton,
 .subButton,
 .dangerButton,
-.observerButton {
+.observerButton,
+.lineButton {
   border: 1px solid transparent;
   border-radius: 14px;
   padding: 12px 16px;
@@ -1425,7 +1989,8 @@ textarea {
   border-color: #d7e1ff;
 }
 
-.observerButton {
+.observerButton,
+.lineButton {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: #dbe5ff;
@@ -1441,7 +2006,8 @@ textarea {
   width: 100%;
 }
 
-.observerNote {
+.observerNote,
+.lockedText {
   background: var(--accent-soft);
   color: var(--accent);
   border: 1px solid #dbe5ff;
@@ -1449,6 +2015,12 @@ textarea {
   padding: 14px;
   font-weight: 700;
   line-height: 1.7;
+}
+
+.lockedText {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fed7aa;
 }
 
 .profileBox {
@@ -1528,9 +2100,15 @@ textarea {
   grid-column: 1 / -1;
 }
 
-.buttonRow {
+.buttonRow,
+.searchRow,
+.smallButtonRow {
   display: flex;
   gap: 12px;
+}
+
+.searchRow input {
+  flex: 1;
 }
 
 .listHeader {
@@ -1646,14 +2224,17 @@ textarea {
 
 .participant,
 .emptyText,
-.zoomBox {
+.zoomBox,
+.friendCard,
+.friendIdBox {
   background: #fbfdff;
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 14px;
 }
 
-.participant strong {
+.participant strong,
+.friendCard strong {
   color: #111827;
 }
 
@@ -1686,6 +2267,19 @@ textarea {
   border-color: #fed7aa;
 }
 
+.friendIdBox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.friendIdBox strong {
+  color: var(--accent);
+  font-size: 24px;
+  letter-spacing: 0.08em;
+}
+
 .empty {
   text-align: center;
   color: var(--subtext);
@@ -1703,7 +2297,13 @@ textarea {
   .sessionTop,
   .bottomArea,
   .createForm,
-  .listHeader {
+  .listHeader,
+  .buttonRow,
+  .searchRow,
+  .smallButtonRow,
+  .friendIdBox,
+  .friendCard,
+  .participant {
     display: flex;
     flex-direction: column;
     align-items: stretch;
