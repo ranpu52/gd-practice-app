@@ -980,10 +980,15 @@ button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
 .homeCard { padding:34px; }
 .homeSearch { display:flex; gap:10px; margin-bottom:14px; }
 .homeMenu,.summaryGrid { margin-top:24px; display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }
-.homeButton { border:1px solid var(--border); border-radius:22px; padding:24px; background:var(--white); color:var(--text); text-align:left; display:flex; flex-direction:column; gap:8px; font-weight:900; }
+.homeButton { border:1px solid var(--border); border-radius:22px; padding:24px; background:var(--white); color:var(--text); text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; font-weight:900; min-height:104px; }
 .homeButton.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-.homeButton span { font-size:20px; }
-.homeButton small { opacity:.85; font-weight:700; }
+.homeButton span { font-size:20px; text-align:center; }
+.homeButton small { opacity:.85; font-weight:700; text-align:center; }
+.homeCard, .calendarCard, .searchPanel, .listHeader { text-align:center; }
+.homeSearch { justify-content:center; }
+.tagArea { justify-content:center; }
+.calendarHeader { justify-content:center; flex-wrap:wrap; }
+.calendarDay { text-align:center; }
 h2 { margin:0 0 16px; font-size:28px; color:var(--text); text-align:center; }
 h3 { margin:12px 0 8px; font-size:22px; color:var(--text); text-align:center; }
 .formArea,.participants,.sessionList { display:flex; flex-direction:column; gap:12px; }
