@@ -9,6 +9,8 @@ const supabase =
 
 const EVENT_TYPES = ["GD練習会", "ES添削会", "模擬面接会"];
 
+const ADMIN_EMAILS = ["kou.hig.may.5@gmail.com"];
+
 function createFriendCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -324,6 +326,10 @@ export default function App() {
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
   }, [sessions, friendIds, authUser]);
+
+  function isAdminUser() {
+    return ADMIN_EMAILS.includes(authUser?.email || "");
+  }
 
   async function signUp() {
     if (!authForm.email.trim() || !authForm.password.trim()) {
@@ -777,8 +783,8 @@ export default function App() {
     const target = sessions.find((session) => session.id === sessionId);
     if (!target) return;
 
-    if (target.ownerUserId !== authUser.id) {
-      alert("募集を削除できるのは作成者のみです");
+    if (target.ownerUserId !== authUser.id && !isAdminUser()) {
+      alert("募集を削除できるのは作成者または管理者のみです");
       return;
     }
 
@@ -1340,15 +1346,15 @@ export default function App() {
                         )}
 
                         <button className="shareButton" onClick={() => shareSession(session)}>
-                          共有する
+                          共有
                         </button>
 
-                        {isOwner ? (
+                        {(isOwner || isAdminUser()) ? (
                           <button className="dangerButton" onClick={() => deleteSession(session.id)}>
                             削除
                           </button>
                         ) : (
-                          <p className="ownerOnlyText">削除は作成者のみ</p>
+                          <p className="ownerOnlyText">削除は作成者または管理者のみ</p>
                         )}
                       </div>
                     </div>
