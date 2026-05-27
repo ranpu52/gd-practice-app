@@ -28,6 +28,43 @@ function formatDateTime(session) {
   return `${session.monthDay || ""} ${session.time || ""}`.trim();
 }
 
+function dateInputToMonthDay(value) {
+  if (!value) return "";
+
+  const [, month, day] = value.split("-");
+
+  if (!month || !day) return "";
+
+  return `${Number(month)}/${Number(day)}`;
+}
+
+function monthDayToDateInput(monthDay) {
+  const parts = String(monthDay || "").split("/");
+
+  if (parts.length !== 2) return "";
+
+  const month = String(Number(parts[0])).padStart(2, "0");
+  const day = String(Number(parts[1])).padStart(2, "0");
+  const year = new Date().getFullYear();
+
+  if (!month || !day || month === "NaN" || day === "NaN") return "";
+
+  return `${year}-${month}-${day}`;
+}
+
+function getMonthDayKey(session) {
+  const parts = String(session.monthDay || "").split("/");
+
+  if (parts.length !== 2) return null;
+
+  const month = Number(parts[0]);
+  const day = Number(parts[1]);
+
+  if (!month || !day) return null;
+
+  return `${month}/${day}`;
+}
+
 function getSessionDate(session) {
   const monthDayMatch = String(session.monthDay || "").match(/^(\d{1,2})\/(\d{1,2})$/);
   const timeMatch = String(session.time || "").match(/^(\d{1,2}):(\d{2})$/);
@@ -205,6 +242,8 @@ export default function App() {
 
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedTag, setSelectedTag] = useState("all");
+  const [calendarDate, setCalendarDate] = useState(new Date());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -373,6 +412,45 @@ export default function App() {
       return matchesKeyword && matchesTag;
     });
   }, [sortedSessions, searchKeyword, selectedTag, friendIds, authUser]);
+
+  const calendarDays = useMemo(() => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const lastDate = new Date(year, month + 1, 0).getDate();
+    const blanks = Array.from({ length: firstDay }, () => null);
+    const days = Array.from({ length: lastDate }, (_, index) => index + 1);
+
+    return [...blanks, ...days];
+  }, [calendarDate]);
+
+  const calendarSessionMap = useMemo(() => {
+    const map = new Map();
+    const currentMonth = calendarDate.getMonth() + 1;
+
+    sessions.forEach((session) => {
+      const key = getMonthDayKey(session);
+      if (!key) return;
+
+      const [monthText] = key.split("/");
+      if (Number(monthText) !== currentMonth) return;
+
+      const currentSessions = map.get(key) || [];
+      map.set(key, [...currentSessions, session]);
+    });
+
+    return map;
+  }, [sessions, calendarDate]);
+
+  const selectedCalendarSessions = useMemo(() => {
+    if (!selectedCalendarDate) return [];
+    return sortedSessions.filter((session) => getMonthDayKey(session) === selectedCalendarDate);
+  }, [selectedCalendarDate, sortedSessions]);
+
+  function moveCalendarMonth(amount) {
+    setCalendarDate((current) => new Date(current.getFullYear(), current.getMonth() + amount, 1));
+    setSelectedCalendarDate(null);
+  }
 
   async function signUp() {
     if (!authForm.email.trim() || !authForm.password.trim()) {
@@ -1051,27 +1129,18 @@ export default function App() {
     <div className="app">
       <style>{styles}</style>
 
-      <header className="hero">
+      <header className="hero compactHero">
         <div className="heroContent">
-          <p className="label">大学生向け就活練習アプリ</p>
-          <h1>GD Practice Hub</h1>
-          <p className="description">
-            GD練習会・ES添削会・模擬面接会を募集できます。
-            フレンドがいる部屋は優先表示され、フレンド限定部屋も作成できます。
-          </p>
+          <h1 className="appTitle">GD Practice Hub</h1>
         </div>
 
-        <div className="heroActions">
-          {currentPage !== "home" && (
+        {currentPage !== "home" && (
+          <div className="heroActions">
             <button className="subButton" onClick={() => setCurrentPage("home")}>
               ホームへ戻る
             </button>
-          )}
-
-          <button className="dangerButton" onClick={signOut}>
-            ログアウト
-          </button>
-        </div>
+          </div>
+        )}
       </header>
 
       {dbError && <div className="alert">{dbError}</div>}
@@ -1133,6 +1202,85 @@ export default function App() {
               <span>プロフィール</span>
             </div>
           </section>
+
+          <section className="card calendarCard">
+            <div className="calendarHeader">
+              <button className="subButton" onClick={() => moveCalendarMonth(-1)}>
+                前月
+              </button>
+              <h2>{calendarDate.getMonth() + 1}月の募集カレンダー</h2>
+              <button className="subButton" onClick={() => moveCalendarMonth(1)}>
+                次月
+              </button>
+            </div>
+
+            <div className="calendarWeekdays">
+              {["日", "月", "火", "水", "木", "金", "土"].map((day) => (
+                <span key={day}>{day}</span>
+              ))}
+            </div>
+
+            <div className="calendarGrid">
+              {calendarDays.map((day, index) => {
+                if (!day) {
+                  return <div className="calendarBlank" key={`blank-${index}`} />;
+                }
+
+                const key = `${calendarDate.getMonth() + 1}/${day}`;
+                const daySessions = calendarSessionMap.get(key) || [];
+                const isSelected = selectedCalendarDate === key;
+
+                return (
+                  <button
+                    key={key}
+                    className={
+                      daySessions.length > 0
+                        ? isSelected
+                          ? "calendarDay hasSession selected"
+                          : "calendarDay hasSession"
+                        : isSelected
+                          ? "calendarDay selected"
+                          : "calendarDay"
+                    }
+                    onClick={() => setSelectedCalendarDate(key)}
+                  >
+                    <strong>{day}</strong>
+                    {daySessions.length > 0 && <small>{daySessions.length}件</small>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="calendarResult">
+              <h3>{selectedCalendarDate ? `${selectedCalendarDate}の募集` : "日付を選択"}</h3>
+
+              {!selectedCalendarDate ? (
+                <p className="emptyText">色が付いている日をタップすると、その日の募集だけ確認できます。</p>
+              ) : selectedCalendarSessions.length === 0 ? (
+                <p className="emptyText">この日の募集はありません。</p>
+              ) : (
+                <div className="calendarSessionList">
+                  {selectedCalendarSessions.map((session) => (
+                    <div className="calendarSessionItem" key={session.id}>
+                      <div>
+                        <strong>{session.title}</strong>
+                        <p>{session.type} / {formatDateTime(session)}</p>
+                      </div>
+                      <button className="subButton" onClick={() => setCurrentPage("rooms")}>
+                        詳細
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="homeLogoutArea">
+            <button className="dangerButton" onClick={signOut}>
+              ログアウト
+            </button>
+          </section>
         </main>
       )}
 
@@ -1187,12 +1335,14 @@ export default function App() {
               <label>
                 日付
                 <input
-                  type="text"
-                  value={newSession.monthDay}
+                  type="date"
+                  value={monthDayToDateInput(newSession.monthDay)}
                   onChange={(event) =>
-                    setNewSession({ ...newSession, monthDay: event.target.value })
+                    setNewSession({
+                      ...newSession,
+                      monthDay: dateInputToMonthDay(event.target.value),
+                    })
                   }
-                  placeholder="例：6/1"
                 />
               </label>
 
@@ -1749,6 +1899,7 @@ export default function App() {
               <li>プロフィールから名前とZoomライセンスの有無を登録します。</li>
               <li>フレンド画面で自分のIDを共有し、相手に申請してもらえます。</li>
               <li>フレンドIDには O / 0 / I / 1 / L のような見間違えやすい文字は使われません。</li>
+              <li>部屋作成では、カレンダーから日付を選び、時間も指定できます。</li>
               <li>部屋作成では、全員公開またはフレンド限定を選べます。</li>
               <li>フレンド限定部屋は、部屋主のフレンドだけ参加できます。</li>
               <li>部屋検索では、フレンドが作成・参加している部屋が優先表示されます。</li>
@@ -1896,6 +2047,16 @@ h1 {
   line-height: 1.05;
   color: #111827;
   letter-spacing: -0.02em;
+}
+
+.appTitle {
+  margin: 0;
+  font-size: 38px;
+  letter-spacing: -0.01em;
+}
+
+.compactHero {
+  padding: 24px 28px;
 }
 
 .description {
@@ -2152,6 +2313,111 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.calendarCard {
+  margin-top: 18px;
+}
+
+.calendarHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.calendarHeader h2 {
+  margin: 0;
+  text-align: center;
+}
+
+.calendarWeekdays,
+.calendarGrid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+}
+
+.calendarWeekdays {
+  margin-top: 18px;
+  color: var(--subtext);
+  font-weight: 900;
+  text-align: center;
+}
+
+.calendarGrid {
+  margin-top: 8px;
+}
+
+.calendarBlank,
+.calendarDay {
+  min-height: 64px;
+  border-radius: 16px;
+}
+
+.calendarBlank {
+  background: transparent;
+}
+
+.calendarDay {
+  border: 1px solid var(--border);
+  background: #fbfdff;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.calendarDay.hasSession {
+  background: var(--accent-soft);
+  border-color: #dbe5ff;
+  color: var(--accent);
+}
+
+.calendarDay.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--white);
+}
+
+.calendarDay small {
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.calendarResult {
+  margin-top: 18px;
+}
+
+.calendarSessionList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calendarSessionItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fbfdff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.calendarSessionItem p {
+  margin: 6px 0 0;
+  color: var(--subtext);
+  font-weight: 700;
+}
+
+.homeLogoutArea {
+  margin-top: 18px;
+  display: flex;
+  justify-content: center;
 }
 
 .tagArea {
@@ -2482,7 +2748,9 @@ textarea {
   .smallButtonRow,
   .friendIdBox,
   .friendCard,
-  .participant {
+  .participant,
+  .calendarHeader,
+  .calendarSessionItem {
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -2490,6 +2758,21 @@ textarea {
 
   h1 {
     font-size: 42px;
+  }
+
+  .appTitle {
+    font-size: 32px;
+  }
+
+  .calendarGrid,
+  .calendarWeekdays {
+    gap: 5px;
+  }
+
+  .calendarBlank,
+  .calendarDay {
+    min-height: 52px;
+    border-radius: 12px;
   }
 
   .description {
