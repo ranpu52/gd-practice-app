@@ -5,6 +5,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
+const LINE_BREAK = String.fromCharCode(10);
 const GD_TAGS = ["GD", "ES添削", "模擬面接", "誰でも歓迎", "フレンドのみ"];
 const METHODS = ["オンライン", "対面", "オンライン・対面どちらも可"];
 const SAFE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -87,8 +88,7 @@ function getNotificationStatus() {
 }
 
 function parseMemo(rawMemo) {
-  const lines = String(rawMemo || "").split("
-");
+  const lines = String(rawMemo || "").split(LINE_BREAK);
   const data = {
     duration: "",
     method: "オンライン",
@@ -107,8 +107,7 @@ function parseMemo(rawMemo) {
     else if (line.trim()) noteLines.push(line);
   });
 
-  data.note = noteLines.join("
-").trim();
+  data.note = noteLines.join(LINE_BREAK).trim();
   return data;
 }
 
@@ -121,8 +120,7 @@ function buildMemo(session) {
     session.memo || "",
   ]
     .filter(Boolean)
-    .join("
-");
+    .join(LINE_BREAK);
 }
 
 function fromSupabase(row) {
@@ -187,8 +185,7 @@ function buildShareText(session) {
     `参加はこちら：${url}`,
   ]
     .filter(Boolean)
-    .join("
-");
+    .join(LINE_BREAK);
 }
 
 async function shareSession(session) {
@@ -199,8 +196,7 @@ async function shareSession(session) {
       await navigator.share({ title: session.title, text, url });
       return;
     }
-    await navigator.clipboard.writeText(`${text}
-${url}`);
+    await navigator.clipboard.writeText(`${text}${LINE_BREAK}${url}`);
     alert("募集リンクをコピーしました。好きなアプリに貼り付けて共有できます。");
   } catch (error) {
     console.error(error);
@@ -300,10 +296,12 @@ export default function App() {
   }, [friendRequests, authUser]);
 
   const friends = useMemo(() => allProfiles.filter((p) => friendIds.has(p.id)), [allProfiles, friendIds]);
+
   const incomingRequests = useMemo(
     () => (authUser ? friendRequests.filter((r) => r.to_user_id === authUser.id && r.status === "pending") : []),
     [friendRequests, authUser]
   );
+
   const outgoingRequests = useMemo(
     () => (authUser ? friendRequests.filter((r) => r.from_user_id === authUser.id && r.status === "pending") : []),
     [friendRequests, authUser]
