@@ -121,7 +121,7 @@ function toSupabase(session) {
   };
 }
 
-function buildLineShareText(session) {
+function buildShareText(session) {
   const appUrl = window.location.origin;
 
   return [
@@ -138,11 +138,27 @@ function buildLineShareText(session) {
   ].join("\n");
 }
 
-function shareSessionToLine(session) {
-  const text = buildLineShareText(session);
-  const encodedText = encodeURIComponent(text);
-  const lineUrl = `https://line.me/R/msg/text/?${encodedText}`;
-  window.open(lineUrl, "_blank", "noopener,noreferrer");
+async function shareSession(session) {
+  const text = buildShareText(session);
+  const appUrl = window.location.origin;
+
+  const shareData = {
+    title: session.title,
+    text,
+    url: appUrl,
+  };
+
+  try {
+    if (navigator.share) {
+      await navigator.share(shareData);
+      return;
+    }
+
+    await navigator.clipboard.writeText(`${text}\n${appUrl}`);
+    alert("募集リンクをコピーしました。好きなアプリに貼り付けて共有できます。");
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 export default function App() {
@@ -1323,8 +1339,8 @@ export default function App() {
                           </>
                         )}
 
-                        <button className="lineButton" onClick={() => shareSessionToLine(session)}>
-                          LINEで共有
+                        <button className="shareButton" onClick={() => shareSession(session)}>
+                          共有する
                         </button>
 
                         {isOwner ? (
@@ -1426,7 +1442,7 @@ export default function App() {
                 <input
                   value={friendCodeInput}
                   onChange={(event) => setFriendCodeInput(event.target.value.toUpperCase())}
-                  placeholder="例：ABC123"
+                  placeholder="例：ABC234"
                 />
                 <button className="mainButton" onClick={searchFriendByCode}>
                   検索
@@ -1648,10 +1664,11 @@ export default function App() {
               <li>メールアドレスとパスワードでログインします。</li>
               <li>プロフィールから名前とZoomライセンスの有無を登録します。</li>
               <li>フレンド画面で自分のIDを共有し、相手に申請してもらえます。</li>
+              <li>フレンドIDには O / 0 / I / 1 / L のような見間違えやすい文字は使われません。</li>
               <li>部屋作成では、全員公開またはフレンド限定を選べます。</li>
               <li>フレンド限定部屋は、部屋主のフレンドだけ参加できます。</li>
               <li>部屋検索では、フレンドが作成・参加している部屋が優先表示されます。</li>
-              <li>LINEで共有ボタンから友達やグループに募集を送れます。</li>
+              <li>共有ボタンから、LINE・SNS・メールなど好きな媒体に募集を送れます。</li>
               <li>募集は指定日時の10時間後に自動削除されます。</li>
             </ol>
           </div>
@@ -2009,7 +2026,7 @@ textarea {
 .subButton,
 .dangerButton,
 .observerButton,
-.lineButton {
+.shareButton {
   border: 1px solid transparent;
   border-radius: 14px;
   padding: 12px 16px;
@@ -2041,7 +2058,7 @@ textarea {
 }
 
 .observerButton,
-.lineButton {
+.shareButton {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: #dbe5ff;
