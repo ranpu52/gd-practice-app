@@ -5,8 +5,9 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-const EVENT_TYPES = ["GD練習会", "ES添削会", "模擬面接会"];
-const TAGS = ["初心者歓迎", "VCあり", "ランク", "カジュアル", "夜"];
+const GD_TYPES = ["GD練習", "ES添削会", "模擬面接会"];
+const GD_TAGS = ["初心者歓迎", "就活対策", "授業練習", "オンライン", "フィードバックあり"];
+const METHODS = ["オンライン", "対面", "オンライン・対面どちらも可"];
 const SAFE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function createFriendCode() {
@@ -86,24 +87,60 @@ function getNotificationStatus() {
   return Notification.permission;
 }
 
-function fromSupabase(row) {
-  const memo = row.memo || "";
-  const tagLine = memo.split("\n").find((line) => line.startsWith("タグ："));
-  const tags = tagLine ? tagLine.replace("タグ：", "").split("、").filter(Boolean) : [];
-  const cleanMemo = memo.split("\n").filter((line) => !line.startsWith("タグ：")).join("\n").trim();
+function parseMemo(rawMemo) {
+  const lines = String(rawMemo || "").split("
+");
+  const data = {
+    duration: "",
+    method: "オンライン",
+    condition: "",
+    tags: [],
+    note: "",
+  };
 
+  const noteLines = [];
+
+  lines.forEach((line) => {
+    if (line.startsWith("所要時間：")) data.duration = line.replace("所要時間：", "").trim();
+    else if (line.startsWith("実施方法：")) data.method = line.replace("実施方法：", "").trim();
+    else if (line.startsWith("参加条件：")) data.condition = line.replace("参加条件：", "").trim();
+    else if (line.startsWith("タグ：")) data.tags = line.replace("タグ：", "").split("、").filter(Boolean);
+    else if (line.trim()) noteLines.push(line);
+  });
+
+  data.note = noteLines.join("
+").trim();
+  return data;
+}
+
+function buildMemo(session) {
+  return [
+    session.duration ? `所要時間：${session.duration}` : "",
+    session.method ? `実施方法：${session.method}` : "",
+    session.condition ? `参加条件：${session.condition}` : "",
+    session.tags?.length ? `タグ：${session.tags.join("、")}` : "",
+    session.memo || "",
+  ].filter(Boolean).join("
+");
+}
+
+function fromSupabase(row) {
+  const extra = parseMemo(row.memo || "");
   return {
     id: row.id,
-    type: row.type || "GD練習会",
-    title: row.title || "無題の募集",
-    theme: row.theme || "",
+    type: row.type || "GD練習",
+    title: row.title || "GDテーマ未設定",
+    theme: row.theme || row.title || "",
     monthDay: row.month_day || "",
     time: row.time || "",
     maxParticipants: row.max_participants || 6,
     maxObservers: row.max_observers || 1,
     zoomUrl: row.zoom_url || "",
-    memo: cleanMemo,
-    tags,
+    memo: extra.note,
+    duration: extra.duration,
+    method: extra.method || "オンライン",
+    condition: extra.condition,
+    tags: extra.tags,
     createdBy: row.created_by,
     createdByName: row.created_by_name || "不明",
     ownerUserId: row.owner_user_id,
@@ -115,18 +152,16 @@ function fromSupabase(row) {
 }
 
 function toSupabase(session) {
-  const tagLine = session.tags?.length ? `タグ：${session.tags.join("、")}` : "";
-  const memo = [session.memo || "", tagLine].filter(Boolean).join("\n");
   return {
-    type: session.type,
+    type: session.type || "GD練習",
     title: session.title,
-    theme: session.theme,
+    theme: session.theme || session.title,
     month_day: session.monthDay,
     time: session.time,
     max_participants: Number(session.maxParticipants) || 6,
     max_observers: 1,
     zoom_url: session.zoomUrl || "",
-    memo,
+    memo: buildMemo(session),
     participants: session.participants || [],
     observers: session.observers || [],
     created_by: session.createdBy,
@@ -140,15 +175,17 @@ function buildShareText(session) {
   const url = window.location.origin;
   return [
     "【GD練習募集】",
+    `GDテーマ：${session.title}`,
     `日時：${formatDateTime(session)}`,
-    `募集名：${session.title}`,
-    `モード：${session.type}`,
-    `内容：${session.theme}`,
-    `人数：${session.participants.length}/${session.maxParticipants}`,
+    `参加人数：${session.participants.length}/${session.maxParticipants}`,
+    `対象：${session.condition || "指定なし"}`,
+    `形式：${session.method || "オンライン"}`,
+    session.duration ? `所要時間：${session.duration}` : "",
     session.tags.length ? `タグ：${session.tags.join("、")}` : "",
     "",
     `参加はこちら：${url}`,
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean).join("
+");
 }
 
 async function shareSession(session) {
@@ -159,7 +196,8 @@ async function shareSession(session) {
       await navigator.share({ title: session.title, text, url });
       return;
     }
-    await navigator.clipboard.writeText(`${text}\n${url}`);
+    await navigator.clipboard.writeText(`${text}
+${url}`);
     alert("募集リンクをコピーしました。好きなアプリに貼り付けて共有できます。");
   } catch (error) {
     console.error(error);
@@ -198,23 +236,21 @@ export default function App() {
   const [selectedTag, setSelectedTag] = useState("all");
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("gd_dark_mode") === "true");
   const [newSession, setNewSession] = useState({
-    type: "GD練習会",
+    type: "GD練習",
     title: "",
     theme: "",
     monthDay: "",
     time: "",
     maxParticipants: 6,
+    duration: "60分",
+    method: "オンライン",
+    condition: "",
     visibility: "public",
     zoomUrl: "",
     memo: "",
     tags: [],
   });
-
-  useEffect(() => {
-    localStorage.setItem("gd_dark_mode", String(darkMode));
-  }, [darkMode]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -275,17 +311,18 @@ export default function App() {
       const friendInRoom = members.some((p) => friendIds.has(p.id));
       const friendCreated = friendIds.has(session.ownerUserId);
       const hasJoined = members.some((p) => p.id === authUser?.id);
-      const text = [session.type, session.title, session.theme, session.createdByName, session.monthDay, session.time, session.memo, ...session.tags].join(" ").toLowerCase();
+      const text = [session.type, session.title, session.theme, session.createdByName, session.monthDay, session.time, session.memo, session.method, session.condition, ...session.tags].join(" ").toLowerCase();
       const keywordOK = !keyword || text.includes(keyword);
       let tagOK = true;
-      if (selectedTag === "gd") tagOK = session.type === "GD練習会";
+      if (selectedTag === "gd") tagOK = session.type === "GD練習";
       if (selectedTag === "es") tagOK = session.type === "ES添削会";
       if (selectedTag === "interview") tagOK = session.type === "模擬面接会";
       if (selectedTag === "available") tagOK = session.participants.length < session.maxParticipants;
+      if (selectedTag === "online") tagOK = session.method === "オンライン" || session.tags.includes("オンライン");
       if (selectedTag === "friends") tagOK = session.visibility === "friends";
       if (selectedTag === "friendRelated") tagOK = friendInRoom || friendCreated;
       if (selectedTag === "joined") tagOK = hasJoined;
-      if (TAGS.includes(selectedTag)) tagOK = session.tags.includes(selectedTag);
+      if (GD_TAGS.includes(selectedTag)) tagOK = session.tags.includes(selectedTag);
       return keywordOK && tagOK;
     });
   }, [sortedSessions, searchKeyword, selectedTag, friendIds, authUser]);
@@ -340,8 +377,8 @@ export default function App() {
   async function resendAuthEmail() {
     if (!authForm.email.trim()) return alert("メールアドレスを入力してください");
     const { error } = await supabase.auth.resend({ type: "signup", email: authForm.email.trim() });
-    if (error) return alert("認証メールの再送信に失敗しました。もう一度お試しください");
-    alert("認証メールを再送信しました");
+    if (error) return alert("メールの再送信に失敗しました。もう一度お試しください");
+    alert("メールを再送信しました");
   }
 
   async function signOut() {
@@ -454,12 +491,12 @@ export default function App() {
   async function createSession(event) {
     event.preventDefault();
     if (!requireProfile()) return;
-    if (!newSession.title.trim() || !newSession.theme.trim() || !newSession.monthDay.trim() || !newSession.time) return alert("タイトル、内容、日付、時間を入力してください");
-    const session = { ...newSession, title: newSession.title.trim(), theme: newSession.theme.trim(), memo: newSession.memo.trim(), maxObservers: 1, createdBy: authUser.id, createdByName: profile.name, ownerUserId: authUser.id, participants: [], observers: [] };
+    if (!newSession.title.trim() || !newSession.monthDay.trim() || !newSession.time) return alert("GDテーマ、日付、時間を入力してください");
+    const session = { ...newSession, title: newSession.title.trim(), theme: newSession.title.trim(), memo: newSession.memo.trim(), maxObservers: 1, createdBy: authUser.id, createdByName: profile.name, ownerUserId: authUser.id, participants: [], observers: [] };
     const { data, error } = await supabase.from("gd_sessions").insert(toSupabase(session)).select().single();
     if (error) return alert("募集作成に失敗しました。もう一度お試しください");
     setSessions((current) => [fromSupabase(data), ...current]);
-    setNewSession({ type: "GD練習会", title: "", theme: "", monthDay: "", time: "", maxParticipants: 6, visibility: "public", zoomUrl: "", memo: "", tags: [] });
+    setNewSession({ type: "GD練習", title: "", theme: "", monthDay: "", time: "", maxParticipants: 6, duration: "60分", method: "オンライン", condition: "", visibility: "public", zoomUrl: "", memo: "", tags: [] });
     setCurrentPage("rooms");
     await loadSessions();
   }
@@ -474,13 +511,13 @@ export default function App() {
     if (!requireProfile()) return;
     const target = sessions.find((s) => s.id === sessionId);
     if (!target) return;
-    if (!canJoinSession(target)) return alert("この部屋はフレンド限定です");
+    if (!canJoinSession(target)) return alert("この募集はフレンド限定です");
     if ([...target.participants, ...target.observers].some((p) => p.id === authUser.id)) return alert("参加中です");
     const profileData = { id: authUser.id, name: profile.name, hasZoomLicense: profile.has_zoom_license };
     const participants = [...target.participants];
     const observers = [...target.observers];
     if (joinType === "observer") {
-      if (observers.length >= target.maxObservers) return alert("オブザーバー満員です");
+      if (observers.length >= target.maxObservers) return alert("見学枠は満員です");
       observers.push(profileData);
     } else {
       if (participants.length >= target.maxParticipants) return alert("満員です");
@@ -579,12 +616,13 @@ export default function App() {
           <div className="sessionMain">
             <p className="dateHero">{formatDateTime(session)}</p>
             <h3>{session.title}</h3>
-            <p className="theme">{session.theme}</p>
-            <div className="infoList">
-              <span>ゲーム名：GD Practice Hub</span>
-              <span>モード：{session.type}</span>
-              <span>人数：{session.participants.length}/{session.maxParticipants}</span>
-              <span>投稿者：{session.createdByName}</span>
+            <div className="gdInfoGrid">
+              <div><span>GDテーマ</span><strong>{session.title}</strong></div>
+              <div><span>日時</span><strong>{formatDateTime(session)}</strong></div>
+              <div><span>参加人数</span><strong>{session.participants.length}/{session.maxParticipants}人</strong></div>
+              <div><span>対象</span><strong>{session.condition || "指定なし"}</strong></div>
+              <div><span>形式</span><strong>{session.method || "オンライン"}</strong></div>
+              <div><span>所要時間</span><strong>{session.duration || "未設定"}</strong></div>
             </div>
             <div className="badgeArea">
               <span className={session.visibility === "friends" ? "badge yellow" : "badge blue"}>{session.visibility === "friends" ? "フレンド限定" : "全員公開"}</span>
@@ -592,8 +630,9 @@ export default function App() {
               {friendInRoom && <span className="badge green">フレンド参加中</span>}
               {session.tags.map((tag) => <span className="badge" key={tag}>{tag}</span>)}
             </div>
+            <p className="meta">投稿者：{session.createdByName}</p>
             <p className="meta">{formatDeleteDate(session)}</p>
-            {session.zoomUrl && <p className="meta">リンク：<a href={session.zoomUrl} target="_blank" rel="noreferrer">開く</a></p>}
+            {session.zoomUrl && <p className="meta">参加リンク：<a href={session.zoomUrl} target="_blank" rel="noreferrer">開く</a></p>}
             {session.memo && <p className="memo">{session.memo}</p>}
             {!canJoin && <p className="lockedText">フレンド限定です</p>}
           </div>
@@ -615,27 +654,27 @@ export default function App() {
   }
 
   if (!supabase) {
-    return <div className={darkMode ? "app dark" : "app"}><style>{styles}</style><div className="authCard"><h1>GD Practice Hub</h1><p>Supabaseの環境変数が設定されていません。もう一度お試しください</p></div></div>;
+    return <div className="app"><style>{styles}</style><div className="authCard"><h1>GD Practice</h1><p>Supabaseの環境変数が設定されていません。もう一度お試しください</p></div></div>;
   }
 
   if (!authUser) {
     return (
-      <div className={darkMode ? "app dark" : "app"}>
+      <div className="app">
         <style>{styles}</style>
         <main className="authLayout">
           <div className="authCard">
-            <h1 className="appTitle">GD Practice Hub</h1>
+            <h1 className="appTitle">GD Practice</h1>
             {authError && (
               <div className="errorBox">
                 <strong>{authError}</strong>
                 <p>もう一度お試しください</p>
                 <div className="buttonRow">
                   <button className="subButton" onClick={() => { window.location.hash = ""; setAuthError(null); setAuthMode("login"); }}>ログイン画面へ戻る</button>
-                  <button className="mainButton" onClick={resendAuthEmail}>認証メールを再送信</button>
+                  <button className="mainButton" onClick={resendAuthEmail}>メールを再送信する</button>
                 </div>
               </div>
             )}
-            <p className="description">GD練習募集アプリ</p>
+            <p className="description">グループディスカッションの練習相手を探せるアプリ</p>
             <div className="authTabs">
               <button className={authMode === "login" ? "choice active" : "choice"} onClick={() => setAuthMode("login")}>ログイン</button>
               <button className={authMode === "signup" ? "choice active" : "choice"} onClick={() => setAuthMode("signup")}>新規登録</button>
@@ -652,11 +691,11 @@ export default function App() {
   }
 
   return (
-    <div className={darkMode ? "app dark" : "app"}>
+    <div className="app">
       <style>{styles}</style>
       <header className="hero compactHero">
-        <h1 className="appTitle">GD Practice Hub</h1>
-        <p className="shortDescription">GD練習募集アプリ</p>
+        <h1 className="appTitle">GD Practice</h1>
+        <p className="shortDescription">グループディスカッションの練習相手を探せるアプリ</p>
         {currentPage !== "home" && <button className="subButton" onClick={() => setCurrentPage("home")}>ホーム</button>}
       </header>
       {dbError && <div className="alert">{dbError}</div>}
@@ -665,23 +704,23 @@ export default function App() {
         <main className="homeLayout">
           <section className="homeCard">
             <div className="homeSearch">
-              <input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="募集を検索" />
+              <input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" />
               <button className="mainButton" onClick={() => setCurrentPage("rooms")}>検索</button>
             </div>
             <div className="tagArea">
-              {["all", ...TAGS, "friendRelated", "available"].map((tag) => <button key={tag} className={selectedTag === tag ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>{tag === "all" ? "すべて" : tag === "friendRelated" ? "フレンド関連" : tag === "available" ? "空きあり" : tag}</button>)}
+              {["all", ...GD_TAGS, "available"].map((tag) => <button key={tag} className={selectedTag === tag ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>{tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag}</button>)}
             </div>
             <div className="homeMenu">
-              <button className="homeButton primary" onClick={() => setCurrentPage("create")}><span>募集作成</span><small>日付・時間を選択</small></button>
-              <button className="homeButton" onClick={() => setCurrentPage("rooms")}><span>募集検索</span><small>タグで絞り込み</small></button>
+              <button className="homeButton primary" onClick={() => setCurrentPage("create")}><span>募集作成</span><small>GD練習相手を募集</small></button>
+              <button className="homeButton" onClick={() => setCurrentPage("rooms")}><span>募集一覧</span><small>練習会を探す</small></button>
               <button className="homeButton" onClick={() => setCurrentPage("friends")}><span>フレンド</span><small>ID検索・申請</small></button>
               <button className="homeButton" onClick={() => setCurrentPage("profile")}><span>プロフィール</span><small>名前・Zoom設定</small></button>
-              <button className="homeButton" onClick={() => setCurrentPage("settings")}><span>設定</span><small>ダークモード</small></button>
+              <button className="homeButton" onClick={() => setCurrentPage("settings")}><span>設定</span><small>通知・データ</small></button>
               <button className="homeButton" onClick={() => setCurrentPage("help")}><span>使い方</span><small>操作説明</small></button>
             </div>
           </section>
           <section className="card calendarCard">
-            <div className="calendarHeader"><button className="subButton" onClick={() => moveCalendarMonth(-1)}>前月</button><h2>{calendarDate.getMonth() + 1}月</h2><button className="subButton" onClick={() => moveCalendarMonth(1)}>次月</button></div>
+            <div className="calendarHeader"><button className="subButton" onClick={() => moveCalendarMonth(-1)}>前月</button><h2>{calendarDate.getMonth() + 1}月のGD練習</h2><button className="subButton" onClick={() => moveCalendarMonth(1)}>次月</button></div>
             <p className="settingText">色付きの日＝募集あり</p>
             <div className="calendarWeekdays">{["日", "月", "火", "水", "木", "金", "土"].map((d) => <span key={d}>{d}</span>)}</div>
             <div className="calendarGrid">{calendarDays.map((day, index) => {
@@ -691,30 +730,31 @@ export default function App() {
               const selected = selectedCalendarDate === key;
               return <button key={key} className={count ? selected ? "calendarDay hasSession selected" : "calendarDay hasSession" : selected ? "calendarDay selected" : "calendarDay"} onClick={() => setSelectedCalendarDate(key)}><strong>{day}</strong>{count > 0 && <small>{count}件</small>}</button>;
             })}</div>
-            <div className="calendarResult"><h3>{selectedCalendarDate ? `${selectedCalendarDate}の募集` : "日付を選択"}</h3>{!selectedCalendarDate ? <p className="emptyText">色付きの日をタップしてください</p> : selectedCalendarSessions.length ? selectedCalendarSessions.map((s) => renderSessionCard(s, true)) : <p className="emptyText">この日の募集はまだありません</p>}</div>
+            <div className="calendarResult"><h3>{selectedCalendarDate ? `${selectedCalendarDate}の募集` : "日付を選択"}</h3>{!selectedCalendarDate ? <p className="emptyText">色付きの日をタップすると、その日の募集だけ確認できます。</p> : selectedCalendarSessions.length ? selectedCalendarSessions.map((s) => renderSessionCard(s, true)) : <p className="emptyText">この日の募集はまだありません</p>}</div>
           </section>
           <section className="homeLogoutArea"><button className="dangerButton" onClick={signOut}>ログアウト</button></section>
         </main>
       )}
 
       {currentPage === "create" && (
-        <main className="singleLayout"><div className="card"><h2>募集作成</h2><form className="createForm" onSubmit={createSession}>
-          <label>モード<select value={newSession.type} onChange={(e) => setNewSession({ ...newSession, type: e.target.value })}>{EVENT_TYPES.map((t) => <option key={t}>{t}</option>)}</select></label>
-          <label>公開<select value={newSession.visibility} onChange={(e) => setNewSession({ ...newSession, visibility: e.target.value })}><option value="public">全員公開</option><option value="friends">フレンド限定</option></select></label>
-          <label>日付<input type="date" value={monthDayToDateInput(newSession.monthDay)} onChange={(e) => setNewSession({ ...newSession, monthDay: dateInputToMonthDay(e.target.value) })} /></label>
-          <label>時間<input type="time" value={newSession.time} onChange={(e) => setNewSession({ ...newSession, time: e.target.value })} /></label>
-          <label>人数<input type="number" min="1" max="12" value={newSession.maxParticipants} onChange={(e) => setNewSession({ ...newSession, maxParticipants: e.target.value })} /></label>
-          <label className="wide">募集名<input value={newSession.title} onChange={(e) => setNewSession({ ...newSession, title: e.target.value })} placeholder="例：初心者向けGD練習" /></label>
-          <label className="wide">内容<input value={newSession.theme} onChange={(e) => setNewSession({ ...newSession, theme: e.target.value })} placeholder="例：新サービス案を考える" /></label>
-          <div className="wide"><p className="formLabel">タグ</p><div className="tagArea">{TAGS.map((tag) => <button type="button" key={tag} className={newSession.tags.includes(tag) ? "tagButton active" : "tagButton"} onClick={() => toggleNewSessionTag(tag)}>{tag}</button>)}</div></div>
-          <label className="wide">リンク<input value={newSession.zoomUrl} onChange={(e) => setNewSession({ ...newSession, zoomUrl: e.target.value })} placeholder="任意" /></label>
-          <label className="wide">備考<textarea value={newSession.memo} onChange={(e) => setNewSession({ ...newSession, memo: e.target.value })} placeholder="補足があれば入力" /></label>
+        <main className="singleLayout"><div className="card"><h2>GD募集作成</h2><form className="createForm" onSubmit={createSession}>
+          <label>開催日<input type="date" value={monthDayToDateInput(newSession.monthDay)} onChange={(e) => setNewSession({ ...newSession, monthDay: dateInputToMonthDay(e.target.value) })} /></label>
+          <label>開始時間<input type="time" value={newSession.time} onChange={(e) => setNewSession({ ...newSession, time: e.target.value })} /></label>
+          <label>募集人数<input type="number" min="1" max="12" value={newSession.maxParticipants} onChange={(e) => setNewSession({ ...newSession, maxParticipants: e.target.value })} /></label>
+          <label>所要時間<select value={newSession.duration} onChange={(e) => setNewSession({ ...newSession, duration: e.target.value })}><option>30分</option><option>45分</option><option>60分</option><option>90分</option><option>120分</option></select></label>
+          <label>実施方法<select value={newSession.method} onChange={(e) => setNewSession({ ...newSession, method: e.target.value })}>{METHODS.map((method) => <option key={method}>{method}</option>)}</select></label>
+          <label>公開範囲<select value={newSession.visibility} onChange={(e) => setNewSession({ ...newSession, visibility: e.target.value })}><option value="public">全員公開</option><option value="friends">フレンド限定</option></select></label>
+          <label className="wide">GDテーマ<input value={newSession.title} onChange={(e) => setNewSession({ ...newSession, title: e.target.value })} placeholder="例：大学生向けの新サービスを考える" /></label>
+          <label className="wide">参加条件<input value={newSession.condition} onChange={(e) => setNewSession({ ...newSession, condition: e.target.value })} placeholder="例：初心者歓迎、就活対策中の大学生" /></label>
+          <div className="wide"><p className="formLabel">タグ</p><div className="tagArea">{GD_TAGS.map((tag) => <button type="button" key={tag} className={newSession.tags.includes(tag) ? "tagButton active" : "tagButton"} onClick={() => toggleNewSessionTag(tag)}>{tag}</button>)}</div></div>
+          <label className="wide">参加リンク<input value={newSession.zoomUrl} onChange={(e) => setNewSession({ ...newSession, zoomUrl: e.target.value })} placeholder="Zoom / Meet / Teamsなど 任意" /></label>
+          <label className="wide">補足説明<textarea value={newSession.memo} onChange={(e) => setNewSession({ ...newSession, memo: e.target.value })} placeholder="進め方、フィードバックの有無、準備物など" /></label>
           <div className="buttonRow wide"><button className="mainButton" type="submit">募集作成</button><button className="subButton" type="button" onClick={() => setCurrentPage("home")}>戻る</button></div>
         </form></div></main>
       )}
 
       {currentPage === "rooms" && (
-        <main className="singleLayout"><div className="card listHeader"><div><h2>募集検索</h2><p>条件に合う募集を表示します。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="募集を検索" /></label><div className="tagArea">{["all", "gd", "es", "interview", "available", "friends", "friendRelated", "joined", ...TAGS].map((tag) => <button key={tag} className={selectedTag === tag ? "tagButton active" : "tagButton"} onClick={() => setSelectedTag(tag)}>{tag === "all" ? "すべて" : tag === "gd" ? "GD" : tag === "es" ? "ES添削" : tag === "interview" ? "模擬面接" : tag === "available" ? "空きあり" : tag === "friends" ? "フレンド限定" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}</button>)}</div></div><div className="sessionList">{filteredSessions.length ? filteredSessions.map((s) => renderSessionCard(s)) : <div className="card empty">条件に合う募集が見つかりませんでした</div>}</div></main>
+        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["all", "available", "online", "friendRelated", "joined", ...GD_TAGS].map((tag) => <button key={tag} className={selectedTag === tag ? "tagButton active" : "tagButton"} onClick={() => setSelectedTag(tag)}>{tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag === "online" ? "オンライン" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}</button>)}</div></div><div className="sessionList">{filteredSessions.length ? filteredSessions.map((s) => renderSessionCard(s)) : <div className="card empty">条件に合う募集が見つかりませんでした</div>}</div></main>
       )}
 
       {currentPage === "friends" && (
@@ -726,11 +766,11 @@ export default function App() {
       )}
 
       {currentPage === "settings" && (
-        <main className="singleLayout"><div className="card"><h2>設定</h2><div className="settingSection"><h3>表示</h3><button className="mainButton full" onClick={() => setDarkMode(!darkMode)}>{darkMode ? "ライトモード" : "ダークモード"}</button></div><div className="settingSection"><h3>通知</h3>{notificationStatus === "granted" ? <p className="notificationBox ok">通知は許可されています</p> : <button className="mainButton full" onClick={requestNotificationPermission}>通知許可</button>}</div><div className="settingSection"><h3>データ</h3><button className="dangerButton full" onClick={resetAllSessions}>自分の募集を初期化</button></div></div></main>
+        <main className="singleLayout"><div className="card"><h2>設定</h2><div className="settingSection"><h3>通知</h3>{notificationStatus === "granted" ? <p className="notificationBox ok">通知は許可されています</p> : <button className="mainButton full" onClick={requestNotificationPermission}>通知許可</button>}</div><div className="settingSection"><h3>データ</h3><button className="dangerButton full" onClick={resetAllSessions}>自分の募集を初期化</button></div></div></main>
       )}
 
       {currentPage === "help" && (
-        <main className="singleLayout"><div className="card"><h2>使い方</h2><ol className="steps large"><li>プロフィールを保存します。</li><li>募集作成で日付と時間を選びます。</li><li>ホームの検索バーやタグで募集を探せます。</li><li>色付きの日は募集ありです。</li><li>共有から好きな媒体に募集を送れます。</li></ol></div></main>
+        <main className="singleLayout"><div className="card"><h2>使い方</h2><ol className="steps large"><li>プロフィールを保存します。</li><li>募集作成でGDテーマ・日時・人数・形式を入力します。</li><li>募集一覧から練習相手を探して参加します。</li><li>共有から好きな媒体に募集を送れます。</li></ol></div></main>
       )}
     </div>
   );
@@ -738,52 +778,46 @@ export default function App() {
 
 const styles = `
 * { box-sizing: border-box; }
-:root { --accent:#4f6ef7; --accent-soft:#eef3ff; --text:#1f2937; --subtext:#5b6475; --border:#e8edf5; --white:#ffffff; --success-bg:#ecfdf3; --success-text:#166534; --warn-bg:#fff7ed; --warn-text:#9a3412; --danger:#be123c; }
-body { margin:0; background:linear-gradient(180deg,#f8fafc 0%,#f4f7fb 100%); color:var(--text); font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+:root { --accent:#2563eb; --accent-soft:#eff6ff; --text:#172033; --subtext:#64748b; --border:#e2e8f0; --white:#ffffff; --success-bg:#ecfdf3; --success-text:#166534; --warn-bg:#fff7ed; --warn-text:#9a3412; --danger:#be123c; }
+body { margin:0; background:#f8fafc; color:var(--text); font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 button,input,textarea,select { font:inherit; }
 button { cursor:pointer; transition:.2s ease; }
 button:hover { transform:translateY(-1px); }
 button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
-.app { min-height:100vh; padding:24px; }
-.dark { --accent:#9ca3af; --accent-soft:#18181b; --text:#f9fafb; --subtext:#d1d5db; --border:#3f3f46; --white:#09090b; --success-bg:#052e16; --success-text:#bbf7d0; --warn-bg:#431407; --warn-text:#fed7aa; background:#000; }
-.dark body { background:#000; }
+.app { min-height:100vh; padding:24px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); }
 .alert,.errorBox { max-width:1180px; margin:0 auto 18px; padding:14px 16px; background:#fff1f2; border:1px solid #ffe4e6; color:var(--danger); border-radius:16px; font-weight:800; }
-.dark .alert,.dark .errorBox { background:#2a0d12; border-color:#7f1d1d; color:#fecdd3; }
 .authLayout { min-height:92vh; display:flex; align-items:center; justify-content:center; }
-.authCard,.homeCard,.card { background:var(--white); border:1px solid var(--border); border-radius:24px; padding:28px; box-shadow:0 10px 30px rgba(79,110,247,.05); }
+.authCard,.homeCard,.card { background:var(--white); border:1px solid var(--border); border-radius:24px; padding:28px; box-shadow:0 12px 32px rgba(37,99,235,.06); }
 .authCard { width:100%; max-width:560px; text-align:center; }
 .authTabs,.choiceArea { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:18px 0; }
-.hero { max-width:1180px; margin:0 auto 20px; padding:24px 28px; background:var(--white); border:1px solid var(--border); border-radius:28px; box-shadow:0 10px 30px rgba(79,110,247,.06); display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px; }
-.appTitle { margin:0; font-size:38px; line-height:1.05; color:var(--text); letter-spacing:-.01em; }
+.hero { max-width:1180px; margin:0 auto 20px; padding:26px 28px; background:#fff; border:1px solid var(--border); border-radius:28px; box-shadow:0 12px 32px rgba(37,99,235,.06); display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; }
+.appTitle { margin:0; font-size:40px; line-height:1.05; color:#1d4ed8; letter-spacing:-.02em; }
 .shortDescription,.description { margin:0; color:var(--subtext); line-height:1.7; font-weight:700; }
 .homeLayout,.singleLayout { max-width:1180px; margin:0 auto; }
 .singleLayout { display:flex; flex-direction:column; gap:18px; }
 .homeCard { padding:34px; }
 .homeSearch { display:flex; gap:10px; margin-bottom:14px; }
 .homeMenu,.summaryGrid { margin-top:24px; display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }
-.homeButton { border:1px solid var(--border); border-radius:22px; padding:24px; background:var(--white); color:var(--text); text-align:left; display:flex; flex-direction:column; gap:8px; font-weight:900; }
+.homeButton { border:1px solid var(--border); border-radius:22px; padding:24px; background:#fff; color:var(--text); text-align:left; display:flex; flex-direction:column; gap:8px; font-weight:900; }
 .homeButton.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 .homeButton span { font-size:20px; }
 .homeButton small { opacity:.85; font-weight:700; }
 h2 { margin:0 0 16px; font-size:28px; color:var(--text); }
 h3 { margin:12px 0 8px; font-size:22px; color:var(--text); }
-h4 { margin:0 0 12px; font-size:17px; color:var(--text); }
 .formArea,.participants,.sessionList { display:flex; flex-direction:column; gap:12px; }
 label { display:flex; flex-direction:column; gap:8px; font-weight:800; color:var(--text); text-align:left; }
 input,textarea,select { width:100%; border:1px solid var(--border); border-radius:16px; padding:14px 15px; outline:none; background:#fbfdff; color:#111827; font-weight:700; min-height:48px; }
-.dark input,.dark textarea,.dark select { background:#18181b; color:#f9fafb; }
 input::placeholder,textarea::placeholder { color:#94a3b8; }
-input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow:0 0 0 4px rgba(79,110,247,.12); }
+input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow:0 0 0 4px rgba(37,99,235,.12); }
 textarea { min-height:96px; resize:vertical; }
 .formLabel { margin:0 0 8px; font-weight:900; }
 .choice,.mainButton,.subButton,.dangerButton,.observerButton,.shareButton,.tagButton { border:1px solid transparent; border-radius:14px; padding:12px 16px; font-weight:900; }
-.choice,.subButton { background:var(--white); color:var(--accent); border-color:#d7e1ff; }
+.choice,.subButton { background:#fff; color:var(--accent); border-color:#bfdbfe; }
 .choice.active,.mainButton { background:var(--accent); color:#fff; border-color:var(--accent); }
-.observerButton,.shareButton,.tagButton { background:var(--accent-soft); color:var(--accent); border-color:#dbe5ff; }
+.observerButton,.shareButton,.tagButton { background:var(--accent-soft); color:var(--accent); border-color:#bfdbfe; }
 .tagButton { border-radius:999px; padding:9px 14px; }
 .tagButton.active { background:var(--accent); color:#fff; border-color:var(--accent); }
 .dangerButton { background:#fff1f2; color:var(--danger); border-color:#ffe4e6; }
-.dark .dangerButton { background:#2a0d12; border-color:#7f1d1d; color:#fecdd3; }
 .full { width:100%; }
 .createForm { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
 .wide { grid-column:1 / -1; }
@@ -791,26 +825,25 @@ textarea { min-height:96px; resize:vertical; }
 .searchRow input,.homeSearch input { flex:1; }
 .listHeader,.sessionTop,.participant,.friendCard,.friendIdBox,.calendarHeader,.calendarSessionItem,.cardHeader { display:flex; justify-content:space-between; gap:14px; align-items:center; }
 .listHeader p,.settingText,.meta { margin:6px 0; color:var(--subtext); font-weight:700; }
-.countBox { background:var(--accent-soft); color:var(--accent); border:1px solid #dbe5ff; border-radius:999px; padding:10px 16px; font-weight:900; white-space:nowrap; }
+.countBox { background:var(--accent-soft); color:var(--accent); border:1px solid #bfdbfe; border-radius:999px; padding:10px 16px; font-weight:900; white-space:nowrap; }
 .dateHero { display:inline-flex; margin:0 0 10px; padding:10px 16px; border-radius:999px; background:var(--accent); color:#fff; font-size:20px; font-weight:950; }
-.infoList { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; color:var(--subtext); font-weight:800; }
-.infoList span { padding:7px 10px; background:var(--accent-soft); border-radius:999px; color:var(--accent); }
+.gdInfoGrid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin:14px 0; }
+.gdInfoGrid div { background:#f8fafc; border:1px solid var(--border); border-radius:16px; padding:12px; display:flex; flex-direction:column; gap:4px; }
+.gdInfoGrid span { color:var(--subtext); font-size:13px; font-weight:900; }
+.gdInfoGrid strong { color:var(--text); font-weight:900; }
 .badgeArea { display:flex; flex-wrap:wrap; gap:8px; }
-.badge { display:inline-flex; align-items:center; justify-content:center; min-height:28px; padding:6px 10px; border-radius:999px; background:#f8fbff; border:1px solid var(--border); color:var(--text); font-size:13px; font-weight:900; }
-.dark .badge { background:#18181b; }
-.badge.green { background:var(--success-bg); color:var(--success-text); border-color:#166534; }
+.badge { display:inline-flex; align-items:center; justify-content:center; min-height:28px; padding:6px 10px; border-radius:999px; background:#f8fafc; border:1px solid var(--border); color:var(--text); font-size:13px; font-weight:900; }
+.badge.green { background:var(--success-bg); color:var(--success-text); border-color:#bbf7d0; }
 .badge.yellow { background:var(--warn-bg); color:var(--warn-text); border-color:#fed7aa; }
-.badge.blue { background:var(--accent-soft); color:var(--accent); border-color:#dbe5ff; }
-.theme { color:var(--text); line-height:1.8; font-weight:800; }
+.badge.blue { background:var(--accent-soft); color:var(--accent); border-color:#bfdbfe; }
 .meta a { color:var(--accent); font-weight:900; text-decoration:none; }
-.memo,.emptyText,.zoomBox,.friendCard,.friendIdBox,.participant,.calendarSessionItem { background:#fbfdff; border:1px solid var(--border); border-radius:16px; padding:14px; }
-.dark .memo,.dark .emptyText,.dark .zoomBox,.dark .friendCard,.dark .friendIdBox,.dark .participant,.dark .calendarSessionItem { background:#18181b; }
+.memo,.emptyText,.friendCard,.friendIdBox,.participant,.calendarSessionItem { background:#fbfdff; border:1px solid var(--border); border-radius:16px; padding:14px; }
 .lockedText { background:var(--warn-bg); color:var(--warn-text); border:1px solid #fed7aa; border-radius:16px; padding:14px; font-weight:800; }
 .actions { min-width:170px; display:flex; flex-direction:column; gap:10px; }
 .ownerOnlyText { margin:0; color:var(--subtext); font-size:13px; font-weight:800; text-align:center; }
 .settingSection { padding-top:16px; margin-top:16px; border-top:1px solid var(--border); }
 .notificationBox { border-radius:16px; padding:16px; line-height:1.7; border:1px solid transparent; }
-.notificationBox.ok { background:var(--success-bg); color:var(--success-text); border-color:#166534; }
+.notificationBox.ok { background:var(--success-bg); color:var(--success-text); border-color:#bbf7d0; }
 .steps { margin:0; padding-left:22px; color:var(--subtext); line-height:1.9; font-weight:700; }
 .searchPanel,.calendarCard { display:flex; flex-direction:column; gap:16px; }
 .calendarCard { margin-top:18px; }
@@ -820,12 +853,11 @@ textarea { min-height:96px; resize:vertical; }
 .calendarBlank,.calendarDay { min-height:64px; border-radius:16px; }
 .calendarBlank { background:transparent; }
 .calendarDay { border:1px solid var(--border); background:#fbfdff; color:var(--text); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
-.dark .calendarDay { background:#18181b; }
-.calendarDay.hasSession { background:var(--accent-soft); border-color:#dbe5ff; color:var(--accent); }
+.calendarDay.hasSession { background:var(--accent-soft); border-color:#bfdbfe; color:var(--accent); }
 .calendarDay.selected { background:var(--accent); border-color:var(--accent); color:#fff; }
 .calendarDay small { font-weight:900; font-size:12px; }
 .calendarResult { margin-top:8px; display:flex; flex-direction:column; gap:10px; }
 .homeLogoutArea { margin-top:18px; display:flex; justify-content:center; }
 .empty { text-align:center; color:var(--subtext); font-weight:800; }
-@media (max-width:860px) { .app { padding:14px; } .hero,.homeMenu,.summaryGrid,.sessionTop,.createForm,.listHeader,.buttonRow,.searchRow,.smallButtonRow,.friendIdBox,.friendCard,.participant,.calendarHeader,.calendarSessionItem,.homeSearch { display:flex; flex-direction:column; align-items:stretch; } .appTitle { font-size:32px; } .actions { width:100%; } .countBox { width:fit-content; } .calendarWeekdays,.calendarGrid { gap:5px; } .calendarBlank,.calendarDay { min-height:52px; border-radius:12px; } }
+@media (max-width:860px) { .app { padding:14px; } .hero,.homeMenu,.summaryGrid,.sessionTop,.createForm,.listHeader,.buttonRow,.searchRow,.smallButtonRow,.friendIdBox,.friendCard,.participant,.calendarHeader,.calendarSessionItem,.homeSearch { display:flex; flex-direction:column; align-items:stretch; } .appTitle { font-size:32px; } .actions { width:100%; } .countBox { width:fit-content; } .gdInfoGrid { grid-template-columns:1fr; } .calendarWeekdays,.calendarGrid { gap:5px; } .calendarBlank,.calendarDay { min-height:52px; border-radius:12px; } }
 `;
