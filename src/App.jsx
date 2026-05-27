@@ -258,12 +258,32 @@ export default function App() {
       observers: [],
     };
 
-    const { error } = await supabase.from("gd_sessions").insert(toSupabase(session));
+    const { data, error } = await supabase
+      .from("gd_sessions")
+      .insert(toSupabase(session))
+      .select()
+      .single();
 
     if (error) {
       console.error(error);
       alert("募集の作成に失敗しました");
       return;
+    }
+
+    if (data) {
+      const createdSession = fromSupabase(data);
+
+      setSessions((currentSessions) => {
+        const alreadyExists = currentSessions.some(
+          (currentSession) => currentSession.id === createdSession.id
+        );
+
+        if (alreadyExists) {
+          return currentSessions;
+        }
+
+        return [createdSession, ...currentSessions];
+      });
     }
 
     setNewSession({
@@ -278,7 +298,7 @@ export default function App() {
     });
 
     setCurrentPage("rooms");
-    loadSessions();
+    await loadSessions();
   }
 
   async function joinSession(sessionId, joinType) {
@@ -328,18 +348,30 @@ export default function App() {
 
     const isNowFull = nextParticipants.length >= target.maxParticipants;
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("gd_sessions")
       .update({
         participants: nextParticipants,
         observers: nextObservers,
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .select()
+      .single();
 
     if (error) {
       console.error(error);
       alert("参加に失敗しました");
       return;
+    }
+
+    if (data) {
+      const updatedSession = fromSupabase(data);
+
+      setSessions((currentSessions) =>
+        currentSessions.map((session) =>
+          session.id === updatedSession.id ? updatedSession : session
+        )
+      );
     }
 
     if (isNowFull) {
@@ -349,7 +381,7 @@ export default function App() {
       );
     }
 
-    loadSessions();
+    await loadSessions();
   }
 
   async function leaveSession(sessionId) {
@@ -365,13 +397,15 @@ export default function App() {
       (person) => person.id !== profile.id
     );
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("gd_sessions")
       .update({
         participants: nextParticipants,
         observers: nextObservers,
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .select()
+      .single();
 
     if (error) {
       console.error(error);
@@ -379,7 +413,17 @@ export default function App() {
       return;
     }
 
-    loadSessions();
+    if (data) {
+      const updatedSession = fromSupabase(data);
+
+      setSessions((currentSessions) =>
+        currentSessions.map((session) =>
+          session.id === updatedSession.id ? updatedSession : session
+        )
+      );
+    }
+
+    await loadSessions();
   }
 
   async function deleteSession(sessionId) {
@@ -407,7 +451,11 @@ export default function App() {
       return;
     }
 
-    loadSessions();
+    setSessions((currentSessions) =>
+      currentSessions.filter((session) => session.id !== sessionId)
+    );
+
+    await loadSessions();
   }
 
   async function resetAllSessions() {
@@ -426,7 +474,8 @@ export default function App() {
       return;
     }
 
-    loadSessions();
+    setSessions([]);
+    await loadSessions();
   }
 
   return (
