@@ -942,7 +942,7 @@ export default function App() {
       )}
 
       {currentPage === "settings" && (
-        <main className="singleLayout"><div className="card"><h2>設定</h2><div className="settingSection"><h3>表示</h3><button className="mainButton full" onClick={() => setDarkMode(!darkMode)}>{darkMode ? "ライトモード" : "ダークモード"}</button><p className="settingText">ダークモードでは青を使わず、黒・白・グレー中心で表示します。</p></div><div className="settingSection"><h3>通知</h3>{notificationStatus === "granted" ? <p className="notificationBox ok">通知は許可されています</p> : <button className="mainButton full" onClick={requestNotificationPermission}>通知許可</button>}</div><div className="settingSection"><h3>データ</h3><button className="dangerButton full" onClick={resetAllSessions}>自分の募集を初期化</button></div></div></main>
+        <main className="singleLayout"><div className="card"><h2>設定</h2><div className="settingSection"><h3>表示</h3><button className="mainButton full" onClick={() => setDarkMode(!darkMode)}>{darkMode ? "ライトモード" : "ダークモード"}</button></div><div className="settingSection"><h3>通知</h3>{notificationStatus === "granted" ? <p className="notificationBox ok">通知は許可されています</p> : <button className="mainButton full" onClick={requestNotificationPermission}>通知許可</button>}</div><div className="settingSection"><h3>データ</h3><button className="dangerButton full" onClick={resetAllSessions}>自分の募集を初期化</button></div></div></main>
       )}
 
       {currentPage === "help" && (
