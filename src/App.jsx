@@ -889,7 +889,7 @@ export default function App() {
               const selected = selectedCalendarDate === key;
               return (
                 <button key={key} className={count ? selected ? "calendarDay hasSession selected" : "calendarDay hasSession" : selected ? "calendarDay selected" : "calendarDay"} onClick={() => setSelectedCalendarDate(key)}>
-                  <strong>{day}</strong>{count > 0 && }
+                  <strong>{day}</strong>{count > 0 && <span className="dayCount">{count}件</span>}
                 </button>
               );
             })}</div>
@@ -1055,7 +1055,7 @@ textarea { min-height:96px; resize:vertical; }
 .calendarDay { border:1px solid var(--border); background:#fbfdff; color:var(--text); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; }
 .calendarDay.hasSession { background:var(--accent-soft); border-color:#bfdbfe; color:var(--accent); }
 .calendarDay.selected { background:var(--accent); border-color:var(--accent); color:#fff; }
-.calendarDay small { font-weight:900; font-size:12px; }
+.calendarDay small, .dayCount { font-weight:900; font-size:12px; }
 .calendarResult { margin-top:8px; display:flex; flex-direction:column; gap:10px; }
 .homeLogoutArea { margin-top:18px; display:flex; justify-content:center; }
 .empty { text-align:center; color:var(--subtext); font-weight:800; }
