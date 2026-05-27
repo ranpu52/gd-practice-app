@@ -934,7 +934,33 @@ export default function App() {
       )}
 
       {currentPage === "friends" && (
-        <main className="singleLayout"><div className="card"><h2>フレンド</h2><div className="friendIdBox"><span>あなたのID</span><strong>{profile?.friend_code || "作成中..."}</strong><button className="subButton" onClick={() => navigator.clipboard.writeText(profile?.friend_code || "")}>IDをコピー</button><button className="shareButton" onClick={() => navigator.share ? navigator.share({ text: `私のフレンドID：${profile?.friend_code}` }) : navigator.clipboard.writeText(profile?.friend_code || "")}>共有</button><button className="subButton" onClick={() => navigator.clipboard.writeText(window.location.origin)}>リンクをコピー</button></div><p className="settingText">Oと0、Iと1、Lなど見間違えやすい文字は使いません。</p><div className="settingSection"><h3>ID検索</h3><div className="searchRow"><input value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="例：ABC234" /><button className="mainButton" onClick={searchFriendByCode}>検索</button></div>{friendMessage && <p className="settingText">{friendMessage}</p>}{foundProfile && <div className="friendCard"><strong>{foundProfile.name}</strong><span>ID：{foundProfile.friend_code}</span><button className="mainButton" onClick={() => sendFriendRequest(foundProfile)}>申請</button></div>}</div><div className="settingSection"><h3>届いた申請</h3>{incomingRequests.length ? incomingRequests.map((r) => <div className="participant" key={r.id}><strong>{getProfileName(r.from_user_id)}</strong><div className="smallButtonRow"><button className="mainButton" onClick={() => acceptFriendRequest(r.id)}>承認</button><button className="dangerButton" onClick={() => deleteFriendRequest(r.id)}>拒否</button></div></div>) : <p className="emptyText">届いている申請はありません</p>}</div><div className="settingSection"><h3>フレンド一覧</h3>{friends.length ? friends.map((f) => <div className="participant" key={f.id}><strong>{f.name}</strong><span className="badge">{f.friend_code}</span></div>) : <p className="emptyText">まだフレンドはいません</p>}</div></div></main>
+        <main className="singleLayout"><div className="card"><h2>フレンド</h2><div className="friendIdBox"><span>あなたのID</span><strong>{profile?.friend_code || "作成中..."}</strong><button className="subButton" onClick={() => navigator.clipboard.writeText(profile?.friend_code || "")}>IDをコピー</button><button className="shareButton" onClick={() => navigator.share ? navigator.share({ text: `私のフレンドID：${profile?.friend_code}` }) : navigator.clipboard.writeText(profile?.friend_code || "")}>共有</button><button className="subButton" onClick={() => navigator.clipboard.writeText(window.location.origin)}>リンクをコピー</button></div><div className="settingSection"><h3>ID検索</h3><div className="searchRow"><input value={friendCodeInput} onChange={(e) => setFriendCodeInput(e.target.value.toUpperCase())} placeholder="例：ABC234" /><button className="mainButton" onClick={searchFriendByCode}>検索</button></div>{friendMessage && <p className="settingText">{friendMessage}</p>}{foundProfile && <div className="friendCard"><strong>{foundProfile.name}</strong><span>ID：{foundProfile.friend_code}</span><button className="mainButton" onClick={() => sendFriendRequest(foundProfile)}>申請</button></div>}</div><div className="settingSection"><h3>届いた申請</h3>{incomingRequests.length ? incomingRequests.map((r) => <div className="participant" key={r.id}><strong>{getProfileName(r.from_user_id)}</strong><div className="smallButtonRow"><button className="mainButton" onClick={() => acceptFriendRequest(r.id)}>承認</button><button className="dangerButton" onClick={() => deleteFriendRequest(r.id)}>拒否</button></div></div>) : <p className="emptyText">届いている申請はありません</p>}</div><div className="settingSection"><h3>フレンド一覧</h3>{friends.length ? friends.map((f) => {
+                const request = friendRequests.find((r) =>
+                  r.status === "accepted" &&
+                  ((r.from_user_id === authUser.id && r.to_user_id === f.id) ||
+                    (r.to_user_id === authUser.id && r.from_user_id === f.id))
+                );
+
+                return (
+                  <div className="participant" key={f.id}>
+                    <div className="friendInfo">
+                      <strong>{f.name}</strong>
+                      <span className="badge friendCodeBadge">{f.friend_code}</span>
+                    </div>
+                    <button
+                      className="dangerButton"
+                      onClick={() => {
+                        if (!request) return;
+                        if (confirm("このフレンドを削除しますか？")) {
+                          deleteFriendRequest(request.id);
+                        }
+                      }}
+                    >
+                      フレンド削除
+                    </button>
+                  </div>
+                );
+              }) : <p className="emptyText">まだフレンドはいません</p>} </div></div></main>
       )}
 
       {currentPage === "profile" && (
@@ -967,6 +993,8 @@ button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
 .dark .mainButton,.dark .homeButton.primary,.dark .tagButton.active,.dark .calendarDay.selected,.dark .dateHero { background:#f4f4f5; color:#09090b; border-color:#f4f4f5; }
 .dark .tagButton,.dark .shareButton,.dark .observerButton,.dark .calendarDay.hasSession { background:#18181b; color:#f4f4f5; border-color:#3f3f46; }
 .dark input,.dark textarea,.dark select,.dark .calendarDay,.dark .gdInfoGrid div,.dark .memo,.dark .emptyText,.dark .friendCard,.dark .friendIdBox,.dark .participant,.dark .calendarSessionItem { background:#18181b; color:#f9fafb; }
+.dark .badge,.dark .friendCodeBadge { background:#27272a; color:#f9fafb; border-color:#71717a; }
+.dark .friendCodeBadge { color:#ffffff; background:#18181b; border-color:#a1a1aa; }
 .alert,.errorBox { max-width:1180px; margin:0 auto 18px; padding:14px 16px; background:#fff1f2; border:1px solid #ffe4e6; color:var(--danger); border-radius:16px; font-weight:800; }
 .authLayout { min-height:92vh; display:flex; align-items:center; justify-content:center; }
 .authCard,.homeCard,.card { background:var(--white); border:1px solid var(--border); border-radius:24px; padding:28px; box-shadow:0 12px 32px rgba(37,99,235,.06); }
@@ -1028,6 +1056,7 @@ textarea { min-height:96px; resize:vertical; }
 .gdInfoGrid span { color:var(--subtext); font-size:13px; font-weight:900; }
 .gdInfoGrid strong { color:var(--text); font-weight:900; }
 .badgeArea { display:flex; flex-wrap:wrap; gap:8px; }
+.friendInfo { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
 .badge { display:inline-flex; align-items:center; justify-content:center; min-height:28px; padding:6px 10px; border-radius:999px; background:#f8fafc; border:1px solid var(--border); color:var(--text); font-size:13px; font-weight:900; }
 .badge.green { background:var(--success-bg); color:var(--success-text); border-color:#bbf7d0; }
 .badge.yellow { background:var(--warn-bg); color:var(--warn-text); border-color:#fed7aa; }
