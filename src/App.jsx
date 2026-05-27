@@ -987,11 +987,13 @@ button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
 .homeCard, .calendarCard, .searchPanel, .listHeader { text-align:center; }
 .homeSearch { justify-content:center; }
 .tagArea { justify-content:center; }
-.calendarHeader { display:grid; grid-template-columns:120px 1fr 120px 120px; align-items:center; gap:14px; }
-.calendarHeader h2 { grid-column:2; justify-self:center; text-align:center; width:100%; }
-.calendarHeader .mainButton { grid-column:4; justify-self:end; }
-.calendarHeader .subButton:first-child { grid-column:1; justify-self:start; }
-.calendarHeader .subButton:nth-child(3) { grid-column:3; justify-self:end; }
+.calendarHeader { display:grid; grid-template-columns:120px 1fr 120px; align-items:center; gap:12px; }
+.calendarHeader h2 { grid-column:2; grid-row:1; justify-self:center; text-align:center; width:100%; }
+.calendarHeader .subButton,
+.calendarHeader .mainButton { white-space:nowrap; min-width:88px; }
+.calendarHeader .subButton:first-child { grid-column:1; grid-row:1; justify-self:start; }
+.calendarHeader .subButton:nth-child(3) { grid-column:3; grid-row:1; justify-self:end; }
+.calendarHeader .mainButton { grid-column:2; grid-row:2; justify-self:center; margin-top:4px; }
 .calendarDay { text-align:center; }
 h2 { margin:0 0 16px; font-size:28px; color:var(--text); text-align:center; }
 h3 { margin:12px 0 8px; font-size:22px; color:var(--text); text-align:center; }
