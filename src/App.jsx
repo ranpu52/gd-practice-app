@@ -203,6 +203,9 @@ export default function App() {
     memo: "",
   });
 
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [selectedTag, setSelectedTag] = useState("all");
+
   useEffect(() => {
     if (!supabase) return;
 
@@ -330,6 +333,46 @@ export default function App() {
   function isAdminUser() {
     return ADMIN_EMAILS.includes(authUser?.email || "");
   }
+
+  const filteredSessions = useMemo(() => {
+    const keyword = searchKeyword.trim().toLowerCase();
+
+    return sortedSessions.filter((session) => {
+      const searchTarget = [
+        session.type,
+        session.title,
+        session.theme,
+        session.createdByName,
+        session.monthDay,
+        session.time,
+        session.memo,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      const matchesKeyword = !keyword || searchTarget.includes(keyword);
+
+      const allMembers = [...session.participants, ...session.observers];
+      const friendInRoom = allMembers.some((person) => friendIds.has(person.id));
+      const friendCreated = friendIds.has(session.ownerUserId);
+      const hasJoined = allMembers.some((person) => person.id === authUser.id);
+
+      let matchesTag = true;
+
+      if (selectedTag === "gd") matchesTag = session.type === "GD練習会";
+      if (selectedTag === "es") matchesTag = session.type === "ES添削会";
+      if (selectedTag === "interview") matchesTag = session.type === "模擬面接会";
+      if (selectedTag === "public") matchesTag = session.visibility !== "friends";
+      if (selectedTag === "friends") matchesTag = session.visibility === "friends";
+      if (selectedTag === "friendRelated") matchesTag = friendCreated || friendInRoom;
+      if (selectedTag === "joined") matchesTag = hasJoined;
+      if (selectedTag === "available") {
+        matchesTag = session.participants.length < session.maxParticipants;
+      }
+
+      return matchesKeyword && matchesTag;
+    });
+  }, [sortedSessions, searchKeyword, selectedTag, friendIds, authUser]);
 
   async function signUp() {
     if (!authForm.email.trim() || !authForm.password.trim()) {
@@ -1235,15 +1278,50 @@ export default function App() {
             </div>
 
             <div className="countBox">
-              {isLoadingSessions ? "読み込み中" : `${sessions.length}件募集中`}
+              {isLoadingSessions
+                ? "読み込み中"
+                : `${filteredSessions.length}/${sessions.length}件表示`}
+            </div>
+          </div>
+
+          <div className="card searchPanel">
+            <label>
+              キーワード検索
+              <input
+                value={searchKeyword}
+                onChange={(event) => setSearchKeyword(event.target.value)}
+                placeholder="タイトル・内容・作成者・日付などで検索"
+              />
+            </label>
+
+            <div className="tagArea">
+              {[
+                ["all", "すべて"],
+                ["gd", "GD"],
+                ["es", "ES添削"],
+                ["interview", "模擬面接"],
+                ["available", "空きあり"],
+                ["public", "全員公開"],
+                ["friends", "フレンド限定"],
+                ["friendRelated", "フレンド関連"],
+                ["joined", "参加中"],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={selectedTag === value ? "tagButton active" : "tagButton"}
+                  onClick={() => setSelectedTag(value)}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
           <div className="sessionList">
-            {sortedSessions.length === 0 ? (
+            {filteredSessions.length === 0 ? (
               <div className="card empty">募集は現在ありません。</div>
             ) : (
-              sortedSessions.map((session) => {
+              filteredSessions.map((session) => {
                 const isOwner = session.ownerUserId === authUser.id;
                 const isFriendLimited = session.visibility === "friends";
                 const canJoin = canJoinSession(session);
@@ -2068,6 +2146,33 @@ textarea {
   background: var(--accent-soft);
   color: var(--accent);
   border-color: #dbe5ff;
+}
+
+.searchPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.tagArea {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.tagButton {
+  border: 1px solid #d7e1ff;
+  border-radius: 999px;
+  padding: 9px 14px;
+  background: var(--white);
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.tagButton.active {
+  background: var(--accent);
+  color: var(--white);
+  border-color: var(--accent);
 }
 
 .dangerButton {
