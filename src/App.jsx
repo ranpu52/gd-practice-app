@@ -5,7 +5,6 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-const GD_TYPES = ["GD練習", "ES添削会", "模擬面接会"];
 const GD_TAGS = ["GD", "ES添削", "模擬面接", "誰でも歓迎", "フレンドのみ"];
 const METHODS = ["オンライン", "対面", "オンライン・対面どちらも可"];
 const SAFE_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -120,7 +119,9 @@ function buildMemo(session) {
     session.condition ? `参加条件：${session.condition}` : "",
     session.tags?.length ? `タグ：${session.tags.join("、")}` : "",
     session.memo || "",
-  ].filter(Boolean).join("
+  ]
+    .filter(Boolean)
+    .join("
 ");
 }
 
@@ -184,7 +185,9 @@ function buildShareText(session) {
     session.tags.length ? `タグ：${session.tags.join("、")}` : "",
     "",
     `参加はこちら：${url}`,
-  ].filter(Boolean).join("
+  ]
+    .filter(Boolean)
+    .join("
 ");
 }
 
@@ -237,6 +240,7 @@ export default function App() {
   const [selectedSearchTags, setSelectedSearchTags] = useState([]);
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("gd_dark_mode") === "true");
   const [newSession, setNewSession] = useState({
     type: "GD練習",
     title: "",
@@ -252,6 +256,10 @@ export default function App() {
     memo: "",
     tags: [],
   });
+
+  useEffect(() => {
+    localStorage.setItem("gd_dark_mode", String(darkMode));
+  }, [darkMode]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -282,16 +290,24 @@ export default function App() {
   const friendIds = useMemo(() => {
     if (!authUser) return new Set();
     const ids = new Set();
-    friendRequests.filter((r) => r.status === "accepted").forEach((r) => {
-      if (r.from_user_id === authUser.id) ids.add(r.to_user_id);
-      if (r.to_user_id === authUser.id) ids.add(r.from_user_id);
-    });
+    friendRequests
+      .filter((r) => r.status === "accepted")
+      .forEach((r) => {
+        if (r.from_user_id === authUser.id) ids.add(r.to_user_id);
+        if (r.to_user_id === authUser.id) ids.add(r.from_user_id);
+      });
     return ids;
   }, [friendRequests, authUser]);
 
   const friends = useMemo(() => allProfiles.filter((p) => friendIds.has(p.id)), [allProfiles, friendIds]);
-  const incomingRequests = useMemo(() => authUser ? friendRequests.filter((r) => r.to_user_id === authUser.id && r.status === "pending") : [], [friendRequests, authUser]);
-  const outgoingRequests = useMemo(() => authUser ? friendRequests.filter((r) => r.from_user_id === authUser.id && r.status === "pending") : [], [friendRequests, authUser]);
+  const incomingRequests = useMemo(
+    () => (authUser ? friendRequests.filter((r) => r.to_user_id === authUser.id && r.status === "pending") : []),
+    [friendRequests, authUser]
+  );
+  const outgoingRequests = useMemo(
+    () => (authUser ? friendRequests.filter((r) => r.from_user_id === authUser.id && r.status === "pending") : []),
+    [friendRequests, authUser]
+  );
 
   const sortedSessions = useMemo(() => {
     if (!authUser) return sessions;
@@ -302,7 +318,9 @@ export default function App() {
       if (friendIds.has(session.ownerUserId)) return 2;
       return 1;
     }
-    return [...sessions].sort((a, b) => priority(b) - priority(a) || new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    return [...sessions].sort(
+      (a, b) => priority(b) - priority(a) || new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+    );
   }, [sessions, friendIds, authUser]);
 
   const filteredSessions = useMemo(() => {
@@ -312,19 +330,45 @@ export default function App() {
       const friendInRoom = members.some((p) => friendIds.has(p.id));
       const friendCreated = friendIds.has(session.ownerUserId);
       const hasJoined = members.some((p) => p.id === authUser?.id);
-      const text = [session.type, session.title, session.theme, session.createdByName, session.monthDay, session.time, session.memo, session.method, session.condition, ...session.tags].join(" ").toLowerCase();
+      const text = [
+        session.type,
+        session.title,
+        session.theme,
+        session.createdByName,
+        session.monthDay,
+        session.time,
+        session.memo,
+        session.method,
+        session.condition,
+        ...session.tags,
+      ]
+        .join(" ")
+        .toLowerCase();
+
       const keywordOK = !keyword || text.includes(keyword);
       let tagOK = true;
-      if (selectedTag === "gd") tagOK = session.type === "GD練習";
-      if (selectedTag === "es") tagOK = session.type === "ES添削会";
-      if (selectedTag === "interview") tagOK = session.type === "模擬面接会";
+
       if (selectedTag === "available") tagOK = session.participants.length < session.maxParticipants;
-      if (selectedTag === "online") tagOK = session.method === "オンライン" || session.tags.includes("オンライン");
-      if (selectedTag === "friends") tagOK = session.visibility === "friends";
       if (selectedTag === "friendRelated") tagOK = friendInRoom || friendCreated;
       if (selectedTag === "joined") tagOK = hasJoined;
-      const selectedTagsOK = selectedSearchTags.every((tag) => session.tags.includes(tag));
-      return keywordOK && tagOK && selectedTagsOK;
+
+      if (selectedSearchTags.includes("GD")) {
+        tagOK = tagOK && (session.type === "GD練習" || session.tags.includes("GD"));
+      }
+      if (selectedSearchTags.includes("ES添削")) {
+        tagOK = tagOK && (session.type === "ES添削会" || session.tags.includes("ES添削"));
+      }
+      if (selectedSearchTags.includes("模擬面接")) {
+        tagOK = tagOK && (session.type === "模擬面接会" || session.tags.includes("模擬面接"));
+      }
+      if (selectedSearchTags.includes("誰でも歓迎")) {
+        tagOK = tagOK && session.tags.includes("誰でも歓迎");
+      }
+      if (selectedSearchTags.includes("フレンドのみ")) {
+        tagOK = tagOK && (session.visibility === "friends" || session.tags.includes("フレンドのみ"));
+      }
+
+      return keywordOK && tagOK;
     });
   }, [sortedSessions, searchKeyword, selectedTag, selectedSearchTags, friendIds, authUser]);
 
@@ -349,10 +393,23 @@ export default function App() {
     return map;
   }, [sessions, calendarDate]);
 
-  const selectedCalendarSessions = useMemo(() => selectedCalendarDate ? sortedSessions.filter((s) => getMonthDayKey(s) === selectedCalendarDate) : [], [selectedCalendarDate, sortedSessions]);
+  const selectedCalendarSessions = useMemo(
+    () => (selectedCalendarDate ? sortedSessions.filter((s) => getMonthDayKey(s) === selectedCalendarDate) : []),
+    [selectedCalendarDate, sortedSessions]
+  );
 
   function moveCalendarMonth(amount) {
     setCalendarDate((current) => new Date(current.getFullYear(), current.getMonth() + amount, 1));
+    setSelectedCalendarDate(null);
+  }
+
+  function moveCalendarYear(amount) {
+    setCalendarDate((current) => new Date(current.getFullYear() + amount, current.getMonth(), 1));
+    setSelectedCalendarDate(null);
+  }
+
+  function resetCalendarToCurrentMonth() {
+    setCalendarDate(new Date());
     setSelectedCalendarDate(null);
   }
 
@@ -366,15 +423,13 @@ export default function App() {
 
     if (GD_TAGS.includes(tag)) {
       setSelectedSearchTags((current) =>
-        current.includes(tag)
-          ? current.filter((item) => item !== tag)
-          : [...current, tag]
+        current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]
       );
       setCurrentPage("rooms");
       return;
     }
 
-    setSelectedTag(tag);
+    setSelectedTag((current) => (current === tag ? "all" : tag));
     setCurrentPage("rooms");
   }
 
@@ -413,7 +468,12 @@ export default function App() {
     if (error) return console.error(error);
     if (data) {
       if (!data.friend_code) {
-        const { data: updated, error: updateError } = await supabase.from("user_profiles").update({ friend_code: createFriendCode(), updated_at: new Date().toISOString() }).eq("id", authUser.id).select().single();
+        const { data: updated, error: updateError } = await supabase
+          .from("user_profiles")
+          .update({ friend_code: createFriendCode(), updated_at: new Date().toISOString() })
+          .eq("id", authUser.id)
+          .select()
+          .single();
         if (updateError) return console.error(updateError);
         setProfile(updated);
         setProfileDraft({ name: updated.name, hasZoomLicense: updated.has_zoom_license });
@@ -428,7 +488,11 @@ export default function App() {
     let inserted = null;
     let insertError = null;
     for (let i = 0; i < 5; i++) {
-      const result = await supabase.from("user_profiles").insert({ id: authUser.id, friend_code: createFriendCode(), name: "未設定", has_zoom_license: false }).select().single();
+      const result = await supabase
+        .from("user_profiles")
+        .insert({ id: authUser.id, friend_code: createFriendCode(), name: "未設定", has_zoom_license: false })
+        .select()
+        .single();
       inserted = result.data;
       insertError = result.error;
       if (!insertError) break;
@@ -451,7 +515,11 @@ export default function App() {
 
   async function loadFriendRequests() {
     if (!authUser) return;
-    const { data, error } = await supabase.from("friend_requests").select("*").or(`from_user_id.eq.${authUser.id},to_user_id.eq.${authUser.id}`).order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("friend_requests")
+      .select("*")
+      .or(`from_user_id.eq.${authUser.id},to_user_id.eq.${authUser.id}`)
+      .order("created_at", { ascending: false });
     if (error) return console.error(error);
     setFriendRequests(data || []);
   }
@@ -481,7 +549,12 @@ export default function App() {
 
   async function saveProfile() {
     if (!profileDraft.name.trim()) return alert("名前を入力してください");
-    const { data, error } = await supabase.from("user_profiles").update({ name: profileDraft.name.trim(), has_zoom_license: profileDraft.hasZoomLicense, updated_at: new Date().toISOString() }).eq("id", authUser.id).select().single();
+    const { data, error } = await supabase
+      .from("user_profiles")
+      .update({ name: profileDraft.name.trim(), has_zoom_license: profileDraft.hasZoomLicense, updated_at: new Date().toISOString() })
+      .eq("id", authUser.id)
+      .select()
+      .single();
     if (error) return alert("プロフィール保存に失敗しました。もう一度お試しください");
     setProfile(data);
     setProfileDraft({ name: data.name, hasZoomLicense: data.has_zoom_license });
@@ -509,12 +582,39 @@ export default function App() {
   async function createSession(event) {
     event.preventDefault();
     if (!requireProfile()) return;
-    if (!newSession.title.trim() || !newSession.monthDay.trim() || !newSession.time) return alert("GDテーマ、日付、時間を入力してください");
-    const session = { ...newSession, title: newSession.title.trim(), theme: newSession.title.trim(), memo: newSession.memo.trim(), maxObservers: 1, createdBy: authUser.id, createdByName: profile.name, ownerUserId: authUser.id, participants: [], observers: [] };
+    if (!newSession.title.trim() || !newSession.monthDay.trim() || !newSession.time) {
+      return alert("GDテーマ、日付、時間を入力してください");
+    }
+    const session = {
+      ...newSession,
+      title: newSession.title.trim(),
+      theme: newSession.title.trim(),
+      memo: newSession.memo.trim(),
+      maxObservers: 1,
+      createdBy: authUser.id,
+      createdByName: profile.name,
+      ownerUserId: authUser.id,
+      participants: [],
+      observers: [],
+    };
     const { data, error } = await supabase.from("gd_sessions").insert(toSupabase(session)).select().single();
     if (error) return alert("募集作成に失敗しました。もう一度お試しください");
     setSessions((current) => [fromSupabase(data), ...current]);
-    setNewSession({ type: "GD練習", title: "", theme: "", monthDay: "", time: "", maxParticipants: 6, duration: "60分", method: "オンライン", condition: "", visibility: "public", zoomUrl: "", memo: "", tags: [] });
+    setNewSession({
+      type: "GD練習",
+      title: "",
+      theme: "",
+      monthDay: "",
+      time: "",
+      maxParticipants: 6,
+      duration: "60分",
+      method: "オンライン",
+      condition: "",
+      visibility: "public",
+      zoomUrl: "",
+      memo: "",
+      tags: [],
+    });
     setCurrentPage("rooms");
     await loadSessions();
   }
@@ -543,7 +643,7 @@ export default function App() {
     }
     const { data, error } = await supabase.from("gd_sessions").update({ participants, observers }).eq("id", sessionId).select().single();
     if (error) return alert("参加に失敗しました。もう一度お試しください");
-    setSessions((current) => current.map((s) => s.id === sessionId ? fromSupabase(data) : s));
+    setSessions((current) => current.map((s) => (s.id === sessionId ? fromSupabase(data) : s)));
     await loadSessions();
   }
 
@@ -554,7 +654,7 @@ export default function App() {
     const observers = target.observers.filter((p) => p.id !== authUser.id);
     const { data, error } = await supabase.from("gd_sessions").update({ participants, observers }).eq("id", sessionId).select().single();
     if (error) return alert("参加取り消しに失敗しました。もう一度お試しください");
-    setSessions((current) => current.map((s) => s.id === sessionId ? fromSupabase(data) : s));
+    setSessions((current) => current.map((s) => (s.id === sessionId ? fromSupabase(data) : s)));
   }
 
   async function deleteSession(sessionId) {
@@ -587,9 +687,17 @@ export default function App() {
   }
 
   async function sendFriendRequest(targetProfile) {
-    const existing = friendRequests.find((r) => (r.from_user_id === authUser.id && r.to_user_id === targetProfile.id) || (r.from_user_id === targetProfile.id && r.to_user_id === authUser.id));
+    const existing = friendRequests.find(
+      (r) =>
+        (r.from_user_id === authUser.id && r.to_user_id === targetProfile.id) ||
+        (r.from_user_id === targetProfile.id && r.to_user_id === authUser.id)
+    );
     if (existing) return alert(existing.status === "accepted" ? "すでにフレンドです" : "申請中です");
-    const { error } = await supabase.from("friend_requests").insert({ from_user_id: authUser.id, to_user_id: targetProfile.id, status: "pending" });
+    const { error } = await supabase.from("friend_requests").insert({
+      from_user_id: authUser.id,
+      to_user_id: targetProfile.id,
+      status: "pending",
+    });
     if (error) return alert("申請に失敗しました。もう一度お試しください");
     setFoundProfile(null);
     setFriendCodeInput("");
@@ -616,7 +724,16 @@ export default function App() {
   function toggleNewSessionTag(tag) {
     setNewSession((current) => {
       const exists = current.tags.includes(tag);
-      return { ...current, tags: exists ? current.tags.filter((item) => item !== tag) : [...current.tags, tag] };
+      const nextTags = exists ? current.tags.filter((item) => item !== tag) : [...current.tags, tag];
+      const nextSession = { ...current, tags: nextTags };
+
+      if (tag === "GD" && !exists) nextSession.type = "GD練習";
+      if (tag === "ES添削" && !exists) nextSession.type = "ES添削会";
+      if (tag === "模擬面接" && !exists) nextSession.type = "模擬面接会";
+      if (tag === "フレンドのみ" && !exists) nextSession.visibility = "friends";
+      if (tag === "誰でも歓迎" && !exists) nextSession.visibility = "public";
+
+      return nextSession;
     });
   }
 
@@ -643,14 +760,18 @@ export default function App() {
               <div><span>所要時間</span><strong>{session.duration || "未設定"}</strong></div>
             </div>
             <div className="badgeArea">
-              <span className={session.visibility === "friends" ? "badge yellow" : "badge blue"}>{session.visibility === "friends" ? "フレンド限定" : "全員公開"}</span>
+              <span className={session.visibility === "friends" ? "badge yellow" : "badge blue"}>
+                {session.visibility === "friends" ? "フレンド限定" : "全員公開"}
+              </span>
               {friendCreated && <span className="badge green">フレンド作成</span>}
               {friendInRoom && <span className="badge green">フレンド参加中</span>}
               {session.tags.map((tag) => <span className="badge" key={tag}>{tag}</span>)}
             </div>
             <p className="meta">投稿者：{session.createdByName}</p>
             <p className="meta">{formatDeleteDate(session)}</p>
-            {session.zoomUrl && <p className="meta">参加リンク：<a href={session.zoomUrl} target="_blank" rel="noreferrer">開く</a></p>}
+            {session.zoomUrl && (
+              <p className="meta">参加リンク：<a href={session.zoomUrl} target="_blank" rel="noreferrer">開く</a></p>
+            )}
             {session.memo && <p className="memo">{session.memo}</p>}
             {!canJoin && <p className="lockedText">フレンド限定です</p>}
           </div>
@@ -659,9 +780,15 @@ export default function App() {
               {hasJoined ? (
                 <button className="subButton" onClick={() => leaveSession(session.id)}>参加中</button>
               ) : (
-                <button className="mainButton" disabled={isFull || !canJoin} onClick={() => joinSession(session.id, "participant")}>{isFull ? "満員" : "参加"}</button>
+                <button className="mainButton" disabled={isFull || !canJoin} onClick={() => joinSession(session.id, "participant")}>
+                  {isFull ? "満員" : "参加"}
+                </button>
               )}
-              {!hasJoined && <button className="observerButton" onClick={() => joinSession(session.id, "observer")} disabled={!canJoin || session.observers.length >= session.maxObservers}>見学</button>}
+              {!hasJoined && (
+                <button className="observerButton" onClick={() => joinSession(session.id, "observer")} disabled={!canJoin || session.observers.length >= session.maxObservers}>
+                  見学
+                </button>
+              )}
               <button className="shareButton" onClick={() => shareSession(session)}>共有</button>
               {isOwner ? <button className="dangerButton" onClick={() => deleteSession(session.id)}>削除</button> : <p className="ownerOnlyText">削除は作成者のみ</p>}
             </div>
@@ -672,12 +799,17 @@ export default function App() {
   }
 
   if (!supabase) {
-    return <div className="app"><style>{styles}</style><div className="authCard"><h1>GD Practice</h1><p>Supabaseの環境変数が設定されていません。もう一度お試しください</p></div></div>;
+    return (
+      <div className={darkMode ? "app dark" : "app"}>
+        <style>{styles}</style>
+        <div className="authCard"><h1>GD Practice</h1><p>Supabaseの環境変数が設定されていません。もう一度お試しください</p></div>
+      </div>
+    );
   }
 
   if (!authUser) {
     return (
-      <div className="app">
+      <div className={darkMode ? "app dark" : "app"}>
         <style>{styles}</style>
         <main className="authLayout">
           <div className="authCard">
@@ -709,7 +841,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={darkMode ? "app dark" : "app"}>
       <style>{styles}</style>
       <header className="hero compactHero">
         <h1 className="appTitle">GD Practice</h1>
@@ -745,12 +877,19 @@ export default function App() {
               <button className="homeButton" onClick={() => setCurrentPage("rooms")}><span>募集一覧</span><small>練習会を探す</small></button>
               <button className="homeButton" onClick={() => setCurrentPage("friends")}><span>フレンド</span><small>ID検索・申請</small></button>
               <button className="homeButton" onClick={() => setCurrentPage("profile")}><span>プロフィール</span><small>名前・Zoom設定</small></button>
-              <button className="homeButton" onClick={() => setCurrentPage("settings")}><span>設定</span><small>通知・データ</small></button>
+              <button className="homeButton" onClick={() => setCurrentPage("settings")}><span>設定</span><small>表示・通知</small></button>
               <button className="homeButton" onClick={() => setCurrentPage("help")}><span>使い方</span><small>操作説明</small></button>
             </div>
           </section>
           <section className="card calendarCard">
-            <div className="calendarHeader"><button className="subButton" onClick={() => moveCalendarMonth(-1)}>前月</button><h2>{calendarDate.getMonth() + 1}月のGD練習</h2><button className="subButton" onClick={() => moveCalendarMonth(1)}>次月</button></div>
+            <div className="calendarHeader">
+              <button className="subButton" onClick={() => moveCalendarYear(-1)}>前年</button>
+              <button className="subButton" onClick={() => moveCalendarMonth(-1)}>前月</button>
+              <h2>{calendarDate.getFullYear()}年 {calendarDate.getMonth() + 1}月のGD練習</h2>
+              <button className="subButton" onClick={() => moveCalendarMonth(1)}>次月</button>
+              <button className="subButton" onClick={() => moveCalendarYear(1)}>翌年</button>
+              <button className="mainButton" onClick={resetCalendarToCurrentMonth}>今月</button>
+            </div>
             <p className="settingText">色付きの日＝募集あり</p>
             <div className="calendarWeekdays">{["日", "月", "火", "水", "木", "金", "土"].map((d) => <span key={d}>{d}</span>)}</div>
             <div className="calendarGrid">{calendarDays.map((day, index) => {
@@ -758,9 +897,16 @@ export default function App() {
               const key = `${calendarDate.getMonth() + 1}/${day}`;
               const count = (calendarSessionMap.get(key) || []).length;
               const selected = selectedCalendarDate === key;
-              return <button key={key} className={count ? selected ? "calendarDay hasSession selected" : "calendarDay hasSession" : selected ? "calendarDay selected" : "calendarDay"} onClick={() => setSelectedCalendarDate(key)}><strong>{day}</strong>{count > 0 && <small>{count}件</small>}</button>;
+              return (
+                <button key={key} className={count ? selected ? "calendarDay hasSession selected" : "calendarDay hasSession" : selected ? "calendarDay selected" : "calendarDay"} onClick={() => setSelectedCalendarDate(key)}>
+                  <strong>{day}</strong>{count > 0 && <small>{count}件</small>}
+                </button>
+              );
             })}</div>
-            <div className="calendarResult"><h3>{selectedCalendarDate ? `${selectedCalendarDate}の募集` : "日付を選択"}</h3>{!selectedCalendarDate ? <p className="emptyText">色付きの日をタップすると、その日の募集だけ確認できます。</p> : selectedCalendarSessions.length ? selectedCalendarSessions.map((s) => renderSessionCard(s, true)) : <p className="emptyText">この日の募集はまだありません</p>}</div>
+            <div className="calendarResult">
+              <h3>{selectedCalendarDate ? `${selectedCalendarDate}の募集` : "日付を選択"}</h3>
+              {!selectedCalendarDate ? <p className="emptyText">色付きの日をタップすると、その日の募集だけ確認できます。</p> : selectedCalendarSessions.length ? selectedCalendarSessions.map((s) => renderSessionCard(s, true)) : <p className="emptyText">この日の募集はまだありません</p>}
+            </div>
           </section>
           <section className="homeLogoutArea"><button className="dangerButton" onClick={signOut}>ログアウト</button></section>
         </main>
@@ -784,7 +930,7 @@ export default function App() {
       )}
 
       {currentPage === "rooms" && (
-        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["all", "available", "online", "friendRelated", "joined", ...GD_TAGS].map((tag) => {
+        <main className="singleLayout"><div className="card listHeader"><div><h2>募集一覧</h2><p>GDテーマ・日時・参加人数・対象・形式を確認できます。</p></div><div className="countBox">{isLoadingSessions ? "読み込み中" : `${filteredSessions.length}/${sessions.length}件`}</div></div><div className="card searchPanel"><label>検索<input value={searchKeyword} onChange={(e) => setSearchKeyword(e.target.value)} placeholder="GDテーマ・対象・形式で検索" /></label><div className="tagArea">{["all", "available", "friendRelated", "joined", ...GD_TAGS].map((tag) => {
                 const active = tag === "all"
                   ? selectedTag === "all" && selectedSearchTags.length === 0
                   : GD_TAGS.includes(tag)
@@ -793,7 +939,7 @@ export default function App() {
 
                 return (
                   <button key={tag} className={active ? "tagButton active" : "tagButton"} onClick={() => setTag(tag)}>
-                    {tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag === "online" ? "オンライン" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}
+                    {tag === "all" ? "すべて" : tag === "available" ? "空きあり" : tag === "friendRelated" ? "フレンド関連" : tag === "joined" ? "参加中" : tag}
                   </button>
                 );
               })}</div></div><div className="sessionList">{filteredSessions.length ? filteredSessions.map((s) => renderSessionCard(s)) : <div className="card empty">条件に合う募集が見つかりませんでした</div>}</div></main>
@@ -808,11 +954,11 @@ export default function App() {
       )}
 
       {currentPage === "settings" && (
-        <main className="singleLayout"><div className="card"><h2>設定</h2><div className="settingSection"><h3>通知</h3>{notificationStatus === "granted" ? <p className="notificationBox ok">通知は許可されています</p> : <button className="mainButton full" onClick={requestNotificationPermission}>通知許可</button>}</div><div className="settingSection"><h3>データ</h3><button className="dangerButton full" onClick={resetAllSessions}>自分の募集を初期化</button></div></div></main>
+        <main className="singleLayout"><div className="card"><h2>設定</h2><div className="settingSection"><h3>表示</h3><button className="mainButton full" onClick={() => setDarkMode(!darkMode)}>{darkMode ? "ライトモード" : "ダークモード"}</button><p className="settingText">ダークモードでは青を使わず、黒・白・グレー中心で表示します。</p></div><div className="settingSection"><h3>通知</h3>{notificationStatus === "granted" ? <p className="notificationBox ok">通知は許可されています</p> : <button className="mainButton full" onClick={requestNotificationPermission}>通知許可</button>}</div><div className="settingSection"><h3>データ</h3><button className="dangerButton full" onClick={resetAllSessions}>自分の募集を初期化</button></div></div></main>
       )}
 
       {currentPage === "help" && (
-        <main className="singleLayout"><div className="card"><h2>使い方</h2><ol className="steps large"><li>プロフィールを保存します。</li><li>募集作成でGDテーマ・日時・人数・形式を入力します。</li><li>募集一覧から練習相手を探して参加します。</li><li>共有から好きな媒体に募集を送れます。</li></ol></div></main>
+        <main className="singleLayout"><div className="card"><h2>使い方</h2><ol className="steps large"><li>プロフィールを保存します。</li><li>募集作成でGDテーマ・日時・人数・形式を入力します。</li><li>募集一覧から練習相手を探して参加します。</li><li>タグは複数選択できます。</li><li>共有から好きな媒体に募集を送れます。</li></ol></div></main>
       )}
     </div>
   );
@@ -827,12 +973,18 @@ button { cursor:pointer; transition:.2s ease; }
 button:hover { transform:translateY(-1px); }
 button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
 .app { min-height:100vh; padding:24px; background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%); }
+.dark { --accent:#f4f4f5; --accent-soft:#18181b; --text:#f9fafb; --subtext:#d4d4d8; --border:#3f3f46; --white:#09090b; --success-bg:#18181b; --success-text:#f4f4f5; --warn-bg:#18181b; --warn-text:#e4e4e7; --danger:#fca5a5; background:#000; color:#f9fafb; }
+.dark.app { background:#000; }
+.dark .appTitle { color:#f9fafb; }
+.dark .mainButton,.dark .homeButton.primary,.dark .tagButton.active,.dark .calendarDay.selected,.dark .dateHero { background:#f4f4f5; color:#09090b; border-color:#f4f4f5; }
+.dark .tagButton,.dark .shareButton,.dark .observerButton,.dark .calendarDay.hasSession { background:#18181b; color:#f4f4f5; border-color:#3f3f46; }
+.dark input,.dark textarea,.dark select,.dark .calendarDay,.dark .gdInfoGrid div,.dark .memo,.dark .emptyText,.dark .friendCard,.dark .friendIdBox,.dark .participant,.dark .calendarSessionItem { background:#18181b; color:#f9fafb; }
 .alert,.errorBox { max-width:1180px; margin:0 auto 18px; padding:14px 16px; background:#fff1f2; border:1px solid #ffe4e6; color:var(--danger); border-radius:16px; font-weight:800; }
 .authLayout { min-height:92vh; display:flex; align-items:center; justify-content:center; }
 .authCard,.homeCard,.card { background:var(--white); border:1px solid var(--border); border-radius:24px; padding:28px; box-shadow:0 12px 32px rgba(37,99,235,.06); }
 .authCard { width:100%; max-width:560px; text-align:center; }
 .authTabs,.choiceArea { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:18px 0; }
-.hero { max-width:1180px; margin:0 auto 20px; padding:26px 28px; background:#fff; border:1px solid var(--border); border-radius:28px; box-shadow:0 12px 32px rgba(37,99,235,.06); display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; }
+.hero { max-width:1180px; margin:0 auto 20px; padding:26px 28px; background:var(--white); border:1px solid var(--border); border-radius:28px; box-shadow:0 12px 32px rgba(37,99,235,.06); display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; }
 .appTitle { margin:0; font-size:40px; line-height:1.05; color:#1d4ed8; letter-spacing:-.02em; }
 .shortDescription,.description { margin:0; color:var(--subtext); line-height:1.7; font-weight:700; }
 .homeLayout,.singleLayout { max-width:1180px; margin:0 auto; }
@@ -840,7 +992,7 @@ button:disabled { cursor:not-allowed; opacity:.5; transform:none; }
 .homeCard { padding:34px; }
 .homeSearch { display:flex; gap:10px; margin-bottom:14px; }
 .homeMenu,.summaryGrid { margin-top:24px; display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }
-.homeButton { border:1px solid var(--border); border-radius:22px; padding:24px; background:#fff; color:var(--text); text-align:left; display:flex; flex-direction:column; gap:8px; font-weight:900; }
+.homeButton { border:1px solid var(--border); border-radius:22px; padding:24px; background:var(--white); color:var(--text); text-align:left; display:flex; flex-direction:column; gap:8px; font-weight:900; }
 .homeButton.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 .homeButton span { font-size:20px; }
 .homeButton small { opacity:.85; font-weight:700; }
@@ -854,7 +1006,7 @@ input:focus,textarea:focus,select:focus { border-color:var(--accent); box-shadow
 textarea { min-height:96px; resize:vertical; }
 .formLabel { margin:0 0 8px; font-weight:900; }
 .choice,.mainButton,.subButton,.dangerButton,.observerButton,.shareButton,.tagButton { border:1px solid transparent; border-radius:14px; padding:12px 16px; font-weight:900; }
-.choice,.subButton { background:#fff; color:var(--accent); border-color:#bfdbfe; }
+.choice,.subButton { background:var(--white); color:var(--accent); border-color:#bfdbfe; }
 .choice.active,.mainButton { background:var(--accent); color:#fff; border-color:var(--accent); }
 .observerButton,.shareButton,.tagButton { background:var(--accent-soft); color:var(--accent); border-color:#bfdbfe; }
 .tagButton { border-radius:999px; padding:9px 14px; }
