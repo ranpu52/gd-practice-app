@@ -865,12 +865,12 @@ export default function App() {
               })}
             </div>
             <div className="homeMenu">
-              <button className="homeButton primary" onClick={() => setCurrentPage("create")}><span>募集作成</span><small>GD練習相手を募集</small></button>
+              <button className="homeButton primary" onClick={() => setCurrentPage("create")}><span>募集作成</span></button>
               <button className="homeButton" onClick={() => setCurrentPage("rooms")}><span>募集一覧</span></button>
-              <button className="homeButton" onClick={() => setCurrentPage("friends")}><span>フレンド</span><small>ID検索・申請</small></button>
-              <button className="homeButton" onClick={() => setCurrentPage("profile")}><span>プロフィール</span><small>名前・Zoom設定</small></button>
-              <button className="homeButton" onClick={() => setCurrentPage("settings")}><span>設定</span><small>表示・通知</small></button>
-              <button className="homeButton" onClick={() => setCurrentPage("help")}><span>使い方</span><small>操作説明</small></button>
+              <button className="homeButton" onClick={() => setCurrentPage("friends")}><span>フレンド</span></button>
+              <button className="homeButton" onClick={() => setCurrentPage("profile")}><span>プロフィール</span></button>
+              <button className="homeButton" onClick={() => setCurrentPage("settings")}><span>設定</span></button>
+              <button className="homeButton" onClick={() => setCurrentPage("help")}><span>使い方</span></button>
             </div>
           </section>
           <section className="card calendarCard">
@@ -889,7 +889,7 @@ export default function App() {
               const selected = selectedCalendarDate === key;
               return (
                 <button key={key} className={count ? selected ? "calendarDay hasSession selected" : "calendarDay hasSession" : selected ? "calendarDay selected" : "calendarDay"} onClick={() => setSelectedCalendarDate(key)}>
-                  <strong>{day}</strong>{count > 0 && <small>{count}件</small>}
+                  <strong>{day}</strong>{count > 0 && }
                 </button>
               );
             })}</div>
